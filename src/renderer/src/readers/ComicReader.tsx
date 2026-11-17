@@ -252,7 +252,13 @@ export const ComicReader = forwardRef<ReaderHandle, ReaderProps>(function ComicR
     scrollToSpeechSegment: () => undefined,
     setSpeechSegmentHighlight: () => undefined,
     advanceSpeechSection: async () => false,
-    setSearchHighlight: () => undefined
+    setSearchHighlight: () => undefined,
+    getThumbnails: () => (pageCount ? { pageCount, kind: 'comic' } : null),
+    getThumbnail: async (targetPage: number) => {
+      const index = Math.round(targetPage) - 1
+      if (index < 0 || index >= pages.length) return null
+      return getComicPageUrl(book.id, index)
+    }
   }))
 
   if (loading) return <ReaderLoading label="正在解析漫画" />

@@ -21,6 +21,7 @@ import type { AutoScrollStatus } from './types'
 import { ReaderError, ReaderLoading } from './TextFlowReader'
 import { normalizedWheelDelta, smoothScrollBy } from '../lib/smoothScroll'
 import { AutoScrollController } from '../lib/autoScroll'
+import { buildPdfOutlineToc, type ResolvedOutlineItem } from '../lib/pdfOutline'
 import {
   buildSpeechSnapshot,
   removeSpeechHighlight,
@@ -104,13 +105,13 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
         }
         documentRef.current = pdf
         setPageCount(pdf.numPages)
-        onTocChange(
-          Array.from({ length: pdf.numPages }, (_, index) => ({
-            id: `pdf-page-${index + 1}`,
-            label: `第 ${index + 1} 页`,
-            chapterId: String(index + 1)
-          }))
-        )
+        onTocChange(buildPdfPageToc(pdf.numPages))
+        // 内嵌大纲解析不阻塞首屏；解析完成后替换为真实章节目录。
+        void resolvePdfOutline(pdf).then((resolved) => {
+          if (!active || resolved.length === 0) return
+          const outlineToc = buildPdfOutlineToc(resolved)
+          if (outlineToc.length) onTocChange(outlineToc)
+        })
         if (!book.coverFile && !book.coverDataUrl) {
           void generatePdfCover(pdf).then((dataUrl) => {
             if (!active || !dataUrl) return
@@ -452,7 +453,30 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     scrollToSpeechSegment,
     setSpeechSegmentHighlight,
     advanceSpeechSection,
-    setSearchHighlight
+    setSearchHighlight,
+    getThumbnails: () => (pageCount ? { pageCount, kind: 'pdf' } : null),
+    getThumbnail: async (targetPage: number, maxWidth: number) => {
+      const pdf = documentRef.current
+      if (!pdf) return null
+      const pageNumber = Math.round(targetPage)
+      if (pageNumber < 1 || pageNumber > pdf.numPages) return null
+      try {
+        const page = await pdf.getPage(pageNumber)
+        const base = page.getViewport({ scale: 1 })
+        const viewport = page.getViewport({
+          scale: Math.max(0.05, maxWidth / base.width)
+        })
+        const canvas = document.createElement('canvas')
+        canvas.width = Math.max(1, Math.floor(viewport.width))
+        canvas.height = Math.max(1, Math.floor(viewport.height))
+        const context = canvas.getContext('2d')
+        if (!context) return null
+        await page.render({ canvasContext: context, viewport }).promise
+        return canvas.toDataURL('image/jpeg', 0.72)
+      } catch {
+        return null
+      }
+    }
   }))
 
   return (
@@ -484,6 +508,55 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     </div>
   )
 })
+
+function buildPdfPageToc(total: number): TocItem[] {
+  return Array.from({ length: total }, (_, index) => ({
+    id: `pdf-page-${index + 1}`,
+    label: `第 ${index + 1} 页`,
+    chapterId: String(index + 1)
+  }))
+}
+
+interface RawOutlineNode {
+  title?: unknown
+  dest?: unknown
+  items?: unknown
+}
+
+/** 解析 PDF 内嵌大纲并定位每个书签的页码；单个条目失败返回 null 页。 */
+async function resolvePdfOutline(
+  pdf: PDFDocumentProxy
+): Promise<readonly ResolvedOutlineItem[]> {
+  const raw = (await pdf.getOutline().catch(() => null)) as RawOutlineNode[] | null
+  if (!raw?.length) return []
+
+  const resolvePage = async (dest: unknown): Promise<number | null> => {
+    try {
+      const explicit =
+        typeof dest === 'string' ? await pdf.getDestination(dest) : (dest as unknown[])
+      if (!Array.isArray(explicit) || explicit.length === 0) return null
+      const index = await pdf.getPageIndex(explicit[0] as never)
+      return index + 1
+    } catch {
+      return null
+    }
+  }
+
+  const resolveAll = async (items: RawOutlineNode[]): Promise<ResolvedOutlineItem[]> => {
+    const resolved: ResolvedOutlineItem[] = []
+    for (const item of items) {
+      resolved.push({
+        title: typeof item.title === 'string' ? item.title : '',
+        page: await resolvePage(item.dest),
+        items: Array.isArray(item.items)
+          ? await resolveAll(item.items as RawOutlineNode[])
+          : undefined
+      })
+    }
+    return resolved
+  }
+  return resolveAll(raw)
+}
 
 async function generatePdfCover(pdf: PDFDocumentProxy): Promise<string | null> {
   try {

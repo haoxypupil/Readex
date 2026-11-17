@@ -30,7 +30,7 @@ Author: Xiaoyao.Hao
 - Library sorting by recent activity, import date, title, or progress, with unread/reading/finished filters, tags, and editable book metadata and covers.
 - Each book has an independent workspace; open order, current book, and reading position are restored after restarting.
 - EPUB continuous scrolling or paginated single/double-column layout, MOBI/AZW3/TXT chapter flow with automatic Chinese heading detection for TXT, a PDF Canvas with a text selection layer, optional two-page and night modes, and an automatically generated first-page cover, plus a CBZ comic reader with page turning, per-book right-to-left reading, wide-window two-page mode, and automatic first-page covers.
-- Table of contents, chapter progress, in-book search with hit highlighting and previous/next navigation, reading position restoration, and a unified annotation model across formats.
+- Table of contents, chapter progress, PDF chapter outlines parsed into the TOC, page thumbnail navigation for PDF and CBZ, in-book search with hit highlighting and previous/next navigation, reading position restoration, and a unified annotation model across formats.
 - Full-library text search across EPUB, TXT, MOBI, and AZW3, with results that open the matching chapter or text position.
 - Immersive reading with `Ctrl+Shift+F`, page turning with `Space`/`PageUp`/`PageDown`, and notification-free full-window reading.
 - Four-color highlights, comments, bookmarks, copy, and a text context menu; notes support location, deletion, revision history, tags, grouped bookmark display, filters, and Markdown export for one book or the whole library.
@@ -164,7 +164,7 @@ Readex 是一个面向 Windows 的本地优先电子书阅读器。应用不登�
 - 书库支持按最近活动、导入时间、书名或进度排序，按未读、在读、已读完筛选，支持书籍标签和标签筛选，并可编辑书名、作者、出版社、简介和封面。
 - 每本书拥有独立工作区，重启后恢复打开顺序、当前书籍和阅读位置。
 - EPUB 连续滚动或分页单/双栏、MOBI/AZW3/TXT 章节流（TXT 自动识别“第 X 章”等标题生成目录）、PDF Canvas 与文本选择层、PDF 双页和夜间模式、PDF 首屏封面自动生成，以及支持翻页、按书从右到左方向、宽窗口双页和首屏封面的 CBZ 漫画阅读器。
-- 目录、章节进度、带匹配高亮和上下条导航的书内搜索、阅读位置恢复和多格式统一标注模型。
+- 目录、章节进度、PDF 内嵌大纲解析、PDF/CBZ 页面缩略图导航、带匹配高亮和上下条导航的书内搜索、阅读位置恢复和多格式统一标注模型。
 - 跨书全文搜索覆盖 EPUB、TXT、MOBI 和 AZW3，结果可直接打开并定位到匹配章节或文本位置。
 - 沉浸阅读（`Ctrl+Shift+F`），支持 `Space`、`PageUp`、`PageDown` 整屏翻页。
 - 四色高亮、评论、书签、复制和文本右键菜单；笔记支持定位、删除、编辑历史、标签、书签分组、条件筛选，以及单本或全库 Markdown 导出。

@@ -826,6 +826,8 @@ PDF 在渲染进程由 pdf.js 处理：
 - 按可见区域延迟渲染
 - 当前页附近提前加载
 - 搜索按页读取文本内容
+- 内嵌大纲异步解析（`getOutline` + `getPageIndex` 定位页码），解析完成后替换按页目录，不阻塞首屏
+- 缩略图按需渲染：以 150px 宽渲染单页为 JPEG data URL，由缩略图面板的共享 IntersectionObserver 驱动
 
 ### 12.6 CBZ
 
@@ -923,6 +925,7 @@ PDF 元数据标题按原始字节解析：
 - 宽窗口（阅读区至少 760 px）支持双页：固定 (1,2)、(3,4) 组合，起始页对齐奇数页，RTL 用 `row-reverse` 把首页放在右侧；双页为全局设置 `comicTwoPage`
 - 使用 `comic-page` locator 保存页码进度，目录按页生成；双页时进度记录起始页
 - 预加载下一页/下一组图片，图片经协议 `Cache-Control` 会话内复用
+- 缩略图直接使用原图 URL 由浏览器缩放，`getThumbnail` 返回 `readex://comic` 地址
 - 不支持选择、高亮、搜索、自动滚动和听书，相关控件会隐藏或提示
 - 首屏封面由导入阶段生成，阅读阶段不再重复生成
 
@@ -1658,6 +1661,7 @@ Windows 使用 `build/readex.ico`：
 | notes.test.ts | Markdown 导出、书签标签、注解标签规范化、笔记编辑历史 |
 | bookTags.test.ts | 标签去空、去重、截断和数量上限 |
 | comicPages.test.ts | 漫画页码钳制与双页起始页对齐 |
+| pdfOutline.test.ts | PDF 大纲到目录树的映射、过滤与标题截断 |
 | comic.test.ts | CBZ 图片过滤、元数据文件和自然排序 |
 | pdfLayout.test.ts | PDF 适应宽度、相对缩放倍率和未就绪页面的安全回退 |
 | selectionContextMenu.test.ts | 文本菜单四向边界翻转和视口内约束 |
@@ -1669,8 +1673,8 @@ Windows 使用 `build/readex.ico`：
 当前测试规模：
 
 ```text
-20 个测试文件
-95 个测试用例
+21 个测试文件
+98 个测试用例
 ```
 
 ### 24.2 手工和自动化桌面验证

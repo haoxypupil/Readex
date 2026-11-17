@@ -11,6 +11,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronUp,
+  LayoutGrid,
   Minimize2,
   ListTree,
   Maximize2,
@@ -50,12 +51,13 @@ import { EpubReader } from '../readers/EpubReader'
 import { PdfReader } from '../readers/PdfReader'
 import { ComicReader } from '../readers/ComicReader'
 import { TextFlowReader } from '../readers/TextFlowReader'
-import type { ReaderHandle } from '../readers/types'
+import type { ReaderHandle, ReaderThumbnailInfo } from '../readers/types'
 import { NotesPanel } from './NotesPanel'
 import { NotesHoverCard } from './NotesHoverCard'
 import { ReaderScrollControls } from './ReaderScrollControls'
 import { SelectionContextMenu } from './SelectionContextMenu'
 import { SelectionToolbar } from './SelectionToolbar'
+import { ThumbnailPanel } from './ThumbnailPanel'
 import { TocPanel } from './TocPanel'
 
 interface ReaderViewProps {
@@ -80,7 +82,7 @@ interface ReaderViewProps {
   floatingWindow?: boolean
 }
 
-type Panel = 'toc' | 'notes' | null
+type Panel = 'toc' | 'notes' | 'thumbnails' | null
 type ReaderCommand =
   | 'previous-chapter'
   | 'next-chapter'
@@ -129,12 +131,26 @@ export function ReaderView({
   const [message, setMessage] = useState('')
   const [autoScrollOn, setAutoScrollOn] = useState(false)
   const [immersive, setImmersive] = useState(false)
+  const [activePage, setActivePage] = useState(0)
+  const [thumbnailInfo, setThumbnailInfo] = useState<ReaderThumbnailInfo | null>(null)
   const [speechState, setSpeechState] = useState<SpeechPlaybackState>('idle')
   const [sleepMinutes, setSleepMinutes] = useState<number | null>(null)
   const sleepTimerRef = useRef<number | null>(null)
   const progressTimer = useRef<number | null>(null)
+  const lastProgressEmitRef = useRef(0)
+  const pendingProgressRef = useRef<number | null>(null)
   const currentLocatorRef = useRef<ReadingLocator | null>(initialLocator)
   const overlayRoot = document.querySelector<HTMLElement>('.app-shell') ?? document.body
+  // PDF 与 CBZ 的“目录”入口默认显示为页面缩略图；PDF 解析出内嵌大纲时额外提供章节目录。
+  const pagedFormat = book.format === 'cbz' || book.format === 'pdf'
+  const hasPdfOutline =
+    book.format === 'pdf' && toc.some((item) => item.id.startsWith('pdf-outline-'))
+
+  useEffect(() => {
+    if (panel !== 'thumbnails') return
+    // 阅读器挂载或目录解析完成后重读；TOC 变化时 PDF 可能刚解析出大纲。
+    setThumbnailInfo(readerRef.current?.getThumbnails?.() ?? null)
+  }, [panel, book.id, toc])
 
   useEffect(() => {
     speechSettingsRef.current = settings
@@ -351,6 +367,7 @@ export function ReaderView({
   useEffect(() => {
     return () => {
       if (progressTimer.current) window.clearTimeout(progressTimer.current)
+      if (pendingProgressRef.current) window.clearTimeout(pendingProgressRef.current)
       if (sleepTimerRef.current) window.clearTimeout(sleepTimerRef.current)
       readerRef.current?.stopAutoScroll()
       speechControllerRef.current?.destroy()
@@ -400,6 +417,11 @@ export function ReaderView({
     }
     const panelListener = (event: Event): void => {
       const next = (event as CustomEvent<Panel>).detail
+      // PDF/CBZ 没有文本目录时，快捷键和菜单的“目录”入口直达页面缩略图。
+      if (next === 'toc' && pagedFormat && !hasPdfOutline) {
+        setPanel('thumbnails')
+        return
+      }
       setPanel(next)
     }
     const commandListener = (event: Event): void => {
@@ -541,16 +563,33 @@ export function ReaderView({
   const handleProgress = useCallback(
     (locator: ReadingLocator, progress: number): void => {
       currentLocatorRef.current = locator
-      if (locator.value.trim()) {
-        const activeItem = findTocItemForLocator(toc, locator)
-        if (activeItem) setActiveTocId(activeItem.id)
+      const emit = (): void => {
+        if (locator.value.trim()) {
+          const activeItem = findTocItemForLocator(toc, locator)
+          if (activeItem) setActiveTocId(activeItem.id)
+        }
+        if (locator.page !== undefined) setActivePage(locator.page)
+        onProgress(book.id, locator, progress)
+        if (!locator.value.trim()) return
+        if (progressTimer.current) window.clearTimeout(progressTimer.current)
+        progressTimer.current = window.setTimeout(() => {
+          void window.readex.reading.saveState(book.id, locator, progress)
+        }, 650)
       }
-      onProgress(book.id, locator, progress)
-      if (!locator.value.trim()) return
-      if (progressTimer.current) window.clearTimeout(progressTimer.current)
-      progressTimer.current = window.setTimeout(() => {
-        void window.readex.reading.saveState(book.id, locator, progress)
-      }, 650)
+      // 滚动事件远高于界面需要的刷新率；节流到 120ms 并保留一次兜底上报，
+      // 停止滚动后进度仍会最终写入。
+      const now = performance.now()
+      if (now - lastProgressEmitRef.current >= 120) {
+        lastProgressEmitRef.current = now
+        emit()
+        return
+      }
+      if (pendingProgressRef.current) window.clearTimeout(pendingProgressRef.current)
+      pendingProgressRef.current = window.setTimeout(() => {
+        pendingProgressRef.current = null
+        lastProgressEmitRef.current = performance.now()
+        emit()
+      }, 120)
     },
     [book.id, onProgress, toc]
   )
@@ -754,14 +793,26 @@ export function ReaderView({
           </div>
         </div>
         <div className="reader-toolbar-actions">
-          <button
-            className={`toolbar-text-button ${panel === 'toc' ? 'active' : ''}`}
-            type="button"
-            onClick={() => setPanel(panel === 'toc' ? null : 'toc')}
-          >
-            <ListTree size={16} />
-            目录
-          </button>
+          {(!pagedFormat || hasPdfOutline) && (
+            <button
+              className={`toolbar-text-button ${panel === 'toc' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setPanel(panel === 'toc' ? null : 'toc')}
+            >
+              <ListTree size={16} />
+              目录
+            </button>
+          )}
+          {pagedFormat && (
+            <button
+              className={`toolbar-text-button ${panel === 'thumbnails' ? 'active' : ''}`}
+              type="button"
+              onClick={() => setPanel(panel === 'thumbnails' ? null : 'thumbnails')}
+            >
+              <LayoutGrid size={16} />
+              页面
+            </button>
+          )}
           <div
             className="notes-hover-anchor"
             onMouseEnter={() => setNotesHoverOpen(true)}
@@ -969,6 +1020,27 @@ export function ReaderView({
                   readerRef.current?.goTo(item)
                 }}
               />
+            ) : panel === 'thumbnails' ? (
+              thumbnailInfo ? (
+                <ThumbnailPanel
+                  info={thumbnailInfo}
+                  getThumbnail={(page, width) =>
+                    readerRef.current?.getThumbnail?.(page, width) ?? Promise.resolve(null)
+                  }
+                  activePage={activePage}
+                  onSelect={(page) => {
+                    readerRef.current?.goTo({
+                      type: 'comic-page',
+                      value: String(page),
+                      page
+                    })
+                  }}
+                />
+              ) : (
+                <div className="side-panel-content">
+                  <div className="panel-empty">正在准备页面…</div>
+                </div>
+              )
             ) : (
               <NotesPanel
                 annotations={annotations}

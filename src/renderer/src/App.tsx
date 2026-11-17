@@ -375,10 +375,14 @@ export default function App(): React.JSX.Element {
         const index = current.books.findIndex((book) => book.id === bookId)
         if (index < 0) return current
         const existing = current.books[index]
-        const unchanged =
-          Math.abs(existing.progress - normalizedProgress) < 0.0005 &&
-          existing.lastLocation?.value === locator.value
-        if (unchanged) return current
+        // 滚动时 EPUB CFI 每帧都变，但界面只关心进度和章节；
+        // 只在这两者变化时更新书库状态，避免每个滚动事件都重渲染整棵树。
+        const chapterChanged =
+          (existing.lastLocation?.chapterHref ?? '') !== (locator.chapterHref ?? '') ||
+          (existing.lastLocation?.chapterId ?? '') !== (locator.chapterId ?? '') ||
+          existing.lastLocation?.page !== locator.page
+        const progressChanged = Math.abs(existing.progress - normalizedProgress) >= 0.001
+        if (!chapterChanged && !progressChanged) return current
 
         const books = [...current.books]
         books[index] = {

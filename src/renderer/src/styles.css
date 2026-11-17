@@ -6089,3 +6089,94 @@ button:disabled {
     transform: none;
   }
 }
+
+/* ===== 表单控件与按钮修正 ===== */
+
+/* 主按钮不再直接用强调色铺底：默认深色主题强调色近白，会导致白底白字按钮。 */
+.primary-button {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--accent) 15%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+}
+
+.primary-button:hover:not(:disabled) {
+  filter: none;
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--accent) 22%, var(--surface-hover));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+/* Windows 的原生下拉弹窗跟随系统主题；给 option 上色可强制 Chromium 自绘为应用配色。 */
+select option {
+  background-color: var(--surface-2);
+  color: var(--text);
+}
+
+input[type='checkbox'],
+input[type='radio'],
+input[type='range'] {
+  accent-color: var(--accent);
+}
+
+/* ===== 页面缩略图 ===== */
+.thumbnail-panel {
+  min-height: 0;
+}
+
+.thumbnail-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  gap: 9px;
+  padding: 4px 10px 14px;
+}
+
+.thumbnail-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.thumbnail-frame {
+  aspect-ratio: 0.72;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  transition:
+    border-color 130ms ease,
+    box-shadow 130ms ease;
+}
+
+.thumbnail-panel[data-kind='pdf'] .thumbnail-frame {
+  background: color-mix(in srgb, #ffffff 92%, var(--text));
+}
+
+.thumbnail-cell:hover .thumbnail-frame {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.thumbnail-cell.active .thumbnail-frame {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.thumbnail-frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.thumbnail-cell small {
+  color: var(--text-muted);
+  font-size: 9px;
+  text-align: center;
+}

@@ -46,6 +46,15 @@ export interface ReaderHandle {
   advanceSpeechSection: () => Promise<boolean>
   /** Highlight the currently navigated search hit; null clears it. */
   setSearchHighlight: (result: SearchResult | null) => void
+  /** 分页格式（PDF、CBZ）提供页面缩略图；其他格式为空。 */
+  getThumbnails?: () => ReaderThumbnailInfo | null
+  /** 返回某页缩略图 URL（CBZ 为原图，PDF 渲染为 data URL）。 */
+  getThumbnail?: (page: number, maxWidth: number) => Promise<string | null>
+}
+
+export interface ReaderThumbnailInfo {
+  pageCount: number
+  kind: 'comic' | 'pdf'
 }
 
 export interface ReaderProps {
