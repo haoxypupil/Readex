@@ -222,7 +222,9 @@ export function LibraryView({
                       <strong>{book.title.slice(0, 24)}</strong>
                     </div>
                   )}
-                  <span className="format-badge">{bookFormatLabel(book.format)}</span>
+                  <span className="format-badge" data-format={book.format}>
+                    {bookFormatLabel(book.format)}
+                  </span>
                   {readingStatus(book) === 'finished' && (
                     <span className="finished-badge">已读完</span>
                   )}

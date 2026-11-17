@@ -82,7 +82,7 @@ describe('application theme', () => {
     expect(style.colorScheme).toBe('light')
   })
 
-  it('keeps primary button labels readable on near-black and near-white accents', () => {
+  it('keeps primary button labels readable on the blue accents', () => {
     const light = createAppThemeStyle({
       ...DEFAULT_READER_SETTINGS,
       theme: 'light',
@@ -94,10 +94,26 @@ describe('application theme', () => {
       ...THEME_PRESETS.dark
     }) as Record<string, string>
 
-    expect(light['--accent']).toBe('#0d0d0d')
+    expect(light['--accent']).toBe('#2563eb')
     expect(light['--accent-contrast']).toBe('#ffffff')
-    expect(dark['--accent']).toBe('#f5f5f5')
-    expect(dark['--accent-contrast']).toBe('#0d0d0d')
+    expect(dark['--accent']).toBe('#5b9cf6')
+    expect(dark['--accent-contrast']).toBe('#ffffff')
+  })
+
+  it('derives a warm secondary accent per shell', () => {
+    const dark = createAppThemeStyle({
+      ...DEFAULT_READER_SETTINGS,
+      theme: 'dark',
+      ...THEME_PRESETS.dark
+    }) as Record<string, string>
+    const light = createAppThemeStyle({
+      ...DEFAULT_READER_SETTINGS,
+      theme: 'light',
+      ...THEME_PRESETS.light
+    }) as Record<string, string>
+
+    expect(dark['--accent-warm']).toBe('#e09a52')
+    expect(light['--accent-warm']).toBe('#c2691f')
   })
 })
 
@@ -113,6 +129,18 @@ describe('theme preset migration', () => {
 
     expect(upgraded).toMatchObject(THEME_PRESETS.light)
     expect(upgraded.fontSize).toBe(DEFAULT_READER_SETTINGS.fontSize)
+  })
+
+  it('upgrades the previous near-white accent palette to the blue presets', () => {
+    const upgraded = upgradeLegacyThemeColors({
+      ...DEFAULT_READER_SETTINGS,
+      theme: 'dark',
+      backgroundColor: '#212121',
+      textColor: '#ececec',
+      accentColor: '#f5f5f5'
+    })
+
+    expect(upgraded).toMatchObject(THEME_PRESETS.dark)
   })
 
   it('upgrades the pre-refresh dark preset in one step', () => {

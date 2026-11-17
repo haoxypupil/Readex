@@ -527,3 +527,31 @@
     transform: none;
   }
 }
+
+/* ===== 主按钮对比度与弹窗表面 ===== */
+
+/* 主按钮文字跟随强调色对比度：蓝色/深色强调色下为白字，浅色强调色下为深字。 */
+.primary-button {
+  color: var(--accent-contrast);
+}
+
+/* 弹窗底色比页面略深并叠加左上高光，分区卡片再亮一档，形成 页面 < 弹窗 < 卡片 的层次。 */
+.dialog {
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.045), transparent 36%),
+    var(--surface);
+  border: 1px solid color-mix(in srgb, var(--border) 72%, var(--accent) 28%);
+}
+
+.settings-section {
+  background: var(--surface-raised);
+  border-color: color-mix(in srgb, var(--border) 86%, var(--accent) 14%);
+}
+
+.modal-backdrop {
+  backdrop-filter: blur(4px);
+}
+
+.settings-backdrop {
+  background: color-mix(in srgb, #000 52%, transparent);
+}

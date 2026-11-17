@@ -2,7 +2,7 @@
 
 > - 项目：Readex 本地电子书阅读器
 > - 作者：Xiaoyao.Hao
-> - 当前版本：0.2.0
+> - 当前版本：0.2.1
 > - 文档日期：2026-11-17
 > - 目标平台：Windows 10/11 x64
 
@@ -1199,6 +1199,11 @@ mainWindow.setTitleBarOverlay({ color, symbolColor, height: 54 })
 `upgradeLegacyThemeColors()` 会逐代比对：只要背景、文字和强调色三者都与某个历史
 预设完全一致，就整体替换为当前预设；任何自选配色都不会被改写。
 
+当前一代为蓝/橙强调色：深色主题强调色 `#5b9cf6`，浅色主题 `#2563eb`，护眼保持
+暖棕 `#9a5b2d`；`--accent-warm` 按主题派生 `#e09a52` / `#c2691f` / `#bf6f2f`，
+用于格式徽章、连续阅读等点缀。上一代的灰白强调色（深色近白、浅色近黑）作为最新
+一代历史预设，会在启动时自动升级到蓝色强调色。
+
 新增一代配色时：
 
 - 把被替换的配色整组挪进 `LEGACY_THEME_PRESETS` 的队首，不要删除旧记录。
@@ -1579,9 +1584,9 @@ pnpm build
 ### 23.2 输出
 
 ```text
-release/Readex-0.2.0-x64.zip
-release/Readex-0.2.0-portable.exe
-release/Readex-0.2.0-green-share.zip
+release/Readex-0.2.1-x64.zip
+release/Readex-0.2.1-portable.exe
+release/Readex-0.2.1-green-share.zip
 release/win-unpacked/Readex.exe
 ```
 
@@ -1674,7 +1679,7 @@ Windows 使用 `build/readex.ico`：
 
 ```text
 21 个测试文件
-98 个测试用例
+100 个测试用例
 ```
 
 ### 24.2 手工和自动化桌面验证

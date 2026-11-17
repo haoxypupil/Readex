@@ -9,6 +9,9 @@ export function createAppThemeStyle(settings: ReaderSettings): CSSProperties {
   const text = normalizeHex(settings.textColor)
   const accent = normalizeHex(settings.accentColor)
   const light = relativeLuminance(background) > 0.55
+  // 暖色辅助色用于格式徽章、连续阅读等点缀，让界面不只有一种强调色。
+  const warm =
+    settings.theme === 'sepia' ? '#bf6f2f' : light ? '#c2691f' : '#e09a52'
 
   return {
     '--bg': background,
@@ -29,6 +32,8 @@ export function createAppThemeStyle(settings: ReaderSettings): CSSProperties {
     '--accent-strong': mix(accent, text, light ? 0.18 : 0.2),
     '--accent-soft': rgba(accent, light ? 0.12 : 0.16),
     '--accent-contrast': readableOn(accent),
+    '--accent-warm': warm,
+    '--accent-warm-soft': rgba(warm, light ? 0.12 : 0.16),
     '--danger': light ? '#c44747' : '#e16b6b',
     '--danger-soft': rgba(light ? '#c44747' : '#e16b6b', 0.12),
     '--warning': light ? '#a26921' : '#d9a85e',

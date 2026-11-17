@@ -16,9 +16,11 @@
   --text: #ececec;
   --text-soft: #c3c3c3;
   --text-muted: #919191;
-  --accent: #f5f5f5;
-  --accent-strong: #f3f3f3;
-  --accent-soft: rgba(245, 245, 245, 0.16);
+  --accent: #5b9cf6;
+  --accent-strong: #7fb3f8;
+  --accent-soft: rgba(91, 156, 246, 0.16);
+  --accent-warm: #e09a52;
+  --accent-warm-soft: rgba(224, 154, 82, 0.16);
   --danger: #e16b6b;
   --danger-soft: rgba(225, 107, 107, 0.12);
   --warning: #d9a85e;
@@ -6092,20 +6094,6 @@ button:disabled {
 
 /* ===== 表单控件与按钮修正 ===== */
 
-/* 主按钮不再直接用强调色铺底：默认深色主题强调色近白，会导致白底白字按钮。 */
-.primary-button {
-  color: var(--text-strong);
-  background: color-mix(in srgb, var(--accent) 15%, var(--surface-2));
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
-}
-
-.primary-button:hover:not(:disabled) {
-  filter: none;
-  transform: translateY(-1px);
-  background: color-mix(in srgb, var(--accent) 22%, var(--surface-hover));
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 24%, transparent);
-}
 
 /* Windows 的原生下拉弹窗跟随系统主题；给 option 上色可强制 Chromium 自绘为应用配色。 */
 select option {
@@ -6179,4 +6167,31 @@ input[type='range'] {
   color: var(--text-muted);
   font-size: 9px;
   text-align: center;
+}
+
+
+/* ===== 格式徽章与暖色点缀 ===== */
+.format-badge[data-format='epub'] {
+  color: #9dc7ff;
+}
+
+.format-badge[data-format='pdf'] {
+  color: #f2b073;
+}
+
+.format-badge[data-format='mobi'],
+.format-badge[data-format='azw3'] {
+  color: #7fd4c0;
+}
+
+.format-badge[data-format='txt'] {
+  color: #bcbcb6;
+}
+
+.format-badge[data-format='cbz'] {
+  color: #c9a6ff;
+}
+
+.stats-cards article.warm svg {
+  color: var(--accent-warm);
 }

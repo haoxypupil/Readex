@@ -83,7 +83,7 @@ export function StatsView({
               <span>累计阅读</span>
               <strong>{formatReadingDuration(current.totalSeconds)}</strong>
             </article>
-            <article>
+            <article className="warm">
               <Flame size={17} />
               <span>连续阅读</span>
               <strong>{streak} 天</strong>

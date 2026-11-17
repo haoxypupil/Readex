@@ -298,7 +298,7 @@ export const DEFAULT_READER_SETTINGS: ReaderSettings = {
   theme: 'dark',
   backgroundColor: '#212121',
   textColor: '#ececec',
-  accentColor: '#f5f5f5',
+  accentColor: '#5b9cf6',
   fontFamily: '"Segoe UI Variable Text", "Microsoft YaHei UI", "PingFang SC", sans-serif',
   fontSize: 17,
   lineHeight: 1.78,
@@ -344,12 +344,12 @@ export const THEME_PRESETS: Record<Exclude<ThemeMode, 'custom'>, ThemePalette> =
   dark: {
     backgroundColor: '#212121',
     textColor: '#ececec',
-    accentColor: '#f5f5f5'
+    accentColor: '#5b9cf6'
   },
   light: {
     backgroundColor: '#ffffff',
     textColor: '#0d0d0d',
-    accentColor: '#0d0d0d'
+    accentColor: '#2563eb'
   },
   sepia: {
     backgroundColor: '#f3ead8',
@@ -368,6 +368,25 @@ export const LEGACY_THEME_PRESETS: readonly Record<
   Exclude<ThemeMode, 'custom'>,
   ThemePalette
 >[] = [
+  {
+    // Codex 灰白强调色一代：深色主题用近白强调色，浅色主题用近黑强调色。
+    // 现在统一升级为蓝/橙强调色。
+    dark: {
+      backgroundColor: '#212121',
+      textColor: '#ececec',
+      accentColor: '#f5f5f5'
+    },
+    light: {
+      backgroundColor: '#ffffff',
+      textColor: '#0d0d0d',
+      accentColor: '#0d0d0d'
+    },
+    sepia: {
+      backgroundColor: '#f3ead8',
+      textColor: '#3e3427',
+      accentColor: '#9a5b2d'
+    }
+  },
   {
     // First public release: warm shell.
     dark: {
