@@ -2,7 +2,7 @@
 
 > - 项目：Readex 本地电子书阅读器
 > - 作者：Xiaoyao.Hao
-> - 当前版本：0.2.1
+> - 当前版本：0.2.2
 > - 文档日期：2026-11-17
 > - 目标平台：Windows 10/11 x64
 
@@ -1584,9 +1584,9 @@ pnpm build
 ### 23.2 输出
 
 ```text
-release/Readex-0.2.1-x64.zip
-release/Readex-0.2.1-portable.exe
-release/Readex-0.2.1-green-share.zip
+release/Readex-0.2.2-x64.zip
+release/Readex-0.2.2-portable.exe
+release/Readex-0.2.2-green-share.zip
 release/win-unpacked/Readex.exe
 ```
 

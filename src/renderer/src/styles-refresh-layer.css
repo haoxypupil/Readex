@@ -555,3 +555,23 @@
 .settings-backdrop {
   background: color-mix(in srgb, #000 52%, transparent);
 }
+
+/* 弹窗表面全部改为不透明色，并去掉背景模糊：
+   部分 Windows GPU 驱动下 backdrop-filter 会让半透明头部透出背景的灰白模糊，
+   表现为弹窗顶部发灰发白。 */
+.modal-backdrop {
+  backdrop-filter: none;
+  background: color-mix(in srgb, #000 58%, transparent);
+}
+
+.dialog {
+  background: var(--surface);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 28px 80px rgba(0, 0, 0, 0.34),
+    0 5px 18px rgba(0, 0, 0, 0.2);
+}
+
+.dialog-header {
+  background: color-mix(in srgb, var(--text) 3%, var(--surface));
+}

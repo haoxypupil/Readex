@@ -119,7 +119,7 @@ pnpm dist:signed  # Validate the signing environment and build the Portable EXE 
 Main output files:
 
 ```text
-release/Readex-0.2.1.exe
+release/Readex-0.2.2.exe
 
 ```
 
@@ -246,8 +246,8 @@ pnpm dist:signed  # 校验签名环境并生成 Portable EXE 和 ZIP
 主要输出：
 
 ```text
-release/Readex-0.2.1.zip
-release/Readex-0.2.1.exe
+release/Readex-0.2.2.zip
+release/Readex-0.2.2.exe
 ```
 
 也可以双击 `build-share-zip.bat` 生成轻量分享 ZIP。该脚本会完成构建、语言包裁剪、排除个人数据、压缩和 SHA-256 计算。

@@ -1,7 +1,7 @@
 # Readex 功能清单与使用指南
 
 > - 项目：Readex
-> - 版本：0.2.1
+> - 版本：0.2.2
 > - 文档更新：2026-11-17
 > - 适用平台：Windows 10/11 x64
 > - 文档定位：面向使用、验收、发布和维护的完整功能索引
@@ -411,10 +411,10 @@ pnpm dist:signed  # 类型检查、签名环境校验、Portable EXE 和 ZIP
 主要输出：
 
 ```text
-release/Readex-0.2.1-x64.zip
-release/Readex-0.2.1-portable.exe
+release/Readex-0.2.2-x64.zip
+release/Readex-0.2.2-portable.exe
 release/win-unpacked/Readex.exe
-release/Readex-0.2.1-绿色版-轻量分享包.zip
+release/Readex-0.2.2-绿色版-轻量分享包.zip
 ```
 
 `build-share-zip.bat` 会完成依赖检查、构建、语言包裁剪、排除个人数据、压缩 ZIP 和 SHA-256 计算。Portable EXE 每次启动前需要释放 Electron 运行环境，启动速度慢于绿色目录版。
