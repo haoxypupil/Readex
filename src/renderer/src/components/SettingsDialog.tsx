@@ -1,9 +1,13 @@
 import {
+  Columns2,
+  EyeOff,
   Highlighter,
+  Moon,
   MoveVertical,
   PictureInPicture2,
   Play,
   RotateCcw,
+  Target,
   Type,
   X
 } from 'lucide-react'
@@ -224,6 +228,32 @@ export function SettingsDialog({
               suffix="px"
               onChange={changeContentWidth}
             />
+            <label className="field">
+              <span>阅读布局</span>
+              <select
+                value={
+                  settings.readingLayout === 'paginated'
+                    ? settings.pageColumns === 2
+                      ? 'paginated:2'
+                      : 'paginated:1'
+                    : 'scroll:1'
+                }
+                onChange={(event) => {
+                  const [layout, columns] = event.target.value.split(':')
+                  patch({
+                    readingLayout: layout === 'paginated' ? 'paginated' : 'scroll',
+                    pageColumns: columns === '2' ? 2 : 1
+                  })
+                }}
+              >
+                <option value="scroll:1">连续滚动</option>
+                <option value="paginated:1">分页 · 单栏</option>
+                <option value="paginated:2">分页 · 双栏（宽窗口）</option>
+              </select>
+            </label>
+            <p className="settings-help">
+              分页与双栏目前仅用于 EPUB；TXT、MOBI/AZW3 和 PDF 仍使用连续滚动。
+            </p>
             <RangeField
               label="PDF 自适应倍率"
               value={settings.pdfScale}
@@ -233,6 +263,33 @@ export function SettingsDialog({
               suffix="×"
               onChange={(pdfScale) => patch({ pdfScale })}
             />
+            <label className="toggle-field">
+              <span>
+                <Moon size={15} />
+                PDF 夜间模式
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.pdfNightMode}
+                onChange={(event) => patch({ pdfNightMode: event.target.checked })}
+              />
+              <i />
+            </label>
+            <label className="toggle-field">
+              <span>
+                <Columns2 size={15} />
+                PDF 双页
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.pdfTwoPage}
+                onChange={(event) => patch({ pdfTwoPage: event.target.checked })}
+              />
+              <i />
+            </label>
+            <p className="settings-help">
+              PDF 夜间模式会把页面渲染结果反色，适合暗色主题下阅读文本型 PDF；彩色图片也会一并反色。PDF 双页会按行并排显示两页，适合宽屏阅读。
+            </p>
             <RangeField
               label="滚轮步长"
               value={settings.wheelScrollStep}
@@ -317,6 +374,27 @@ export function SettingsDialog({
 
           <div className="settings-section">
             <h3>
+              <Target size={16} /> 阅读目标
+            </h3>
+            <p className="settings-help">
+              设置每日阅读目标后，阅读统计页会显示今日完成进度；0 分钟表示不设目标。
+            </p>
+            <RangeField
+              label="每日目标"
+              value={settings.dailyReadingGoalMinutes}
+              min={0}
+              max={180}
+              step={5}
+              suffix="分钟"
+              precision={0}
+              onChange={(dailyReadingGoalMinutes) =>
+                patch({ dailyReadingGoalMinutes })
+              }
+            />
+          </div>
+
+          <div className="settings-section">
+            <h3>
               <PictureInPicture2 size={16} /> 浮框阅读
             </h3>
             <p className="settings-help">
@@ -340,6 +418,21 @@ export function SettingsDialog({
               suffix="px"
               onChange={(floatingReaderHeight) => patch({ floatingReaderHeight })}
             />
+            <label className="toggle-field">
+              <span>
+                <EyeOff size={15} />
+                隐身模式
+              </span>
+              <input
+                type="checkbox"
+                checked={settings.floatingReaderStealth}
+                onChange={(event) => patch({ floatingReaderStealth: event.target.checked })}
+              />
+              <i />
+            </label>
+            <p className="settings-help">
+              隐身模式去掉浮窗边框与按钮，只保留背景色和正文；窗口右上角悬停可唤出按钮，鼠标移到右缘可唤出滚动控制。
+            </p>
           </div>
 
           <div

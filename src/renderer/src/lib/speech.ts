@@ -1,5 +1,5 @@
 import type { ReaderSettings } from '@shared/types'
-import type { TtsSynthesisResult } from '@shared/speech'
+import { selectSystemVoice, type TtsSynthesisResult } from '@shared/speech'
 import type {
   ReaderHandle,
   ReaderSpeechSegment,
@@ -12,7 +12,7 @@ export type SpeechPlaybackState = 'idle' | 'loading' | 'playing' | 'paused'
 
 interface SpeechPlaybackDelegate {
   getReader: () => ReaderHandle | null
-  getSettings: () => Pick<ReaderSettings, 'ttsVoice' | 'ttsRate' | 'ttsVolume'>
+  getSettings: () => ReaderSettings
   synthesize: (request: {
     text: string
     voice: string
@@ -133,6 +133,7 @@ export class SpeechPlaybackController {
   private chunkIndex = 0
   private audio: HTMLAudioElement | null = null
   private objectUrl: string | null = null
+  private utterance: SpeechSynthesisUtterance | null = null
   private prefetched: PrefetchedAudio | null = null
   private disposed = false
 
@@ -142,7 +143,7 @@ export class SpeechPlaybackController {
     return this.state
   }
 
-  async toggle(): Promise<void> {
+  async toggle(startText?: string): Promise<void> {
     if (this.state === 'playing') {
       this.pause()
       return
@@ -155,10 +156,10 @@ export class SpeechPlaybackController {
       this.stop()
       return
     }
-    await this.start()
+    await this.start(startText)
   }
 
-  async start(): Promise<void> {
+  async start(startText?: string): Promise<void> {
     const reader = this.delegate.getReader()
     if (!reader) {
       this.delegate.onMessage('阅读内容尚未准备好')
@@ -172,19 +173,31 @@ export class SpeechPlaybackController {
 
     this.session += 1
     this.snapshot = snapshot
-    this.segmentIndex = snapshot.startIndex
+    this.segmentIndex = findSelectionStartIndex(snapshot, startText) ?? snapshot.startIndex
     this.chunkIndex = 0
     await this.playCurrent()
   }
 
   pause(): void {
-    if (this.state !== 'playing' || !this.audio) return
+    if (this.state !== 'playing') return
+    if (this.utterance) {
+      window.speechSynthesis.pause()
+      this.setState('paused')
+      return
+    }
+    if (!this.audio) return
     this.audio.pause()
     this.setState('paused')
   }
 
   async resume(): Promise<void> {
-    if (this.state !== 'paused' || !this.audio) return
+    if (this.state !== 'paused') return
+    if (this.utterance) {
+      window.speechSynthesis.resume()
+      this.setState('playing')
+      return
+    }
+    if (!this.audio) return
     try {
       await this.audio.play()
       this.setState('playing')
@@ -248,6 +261,25 @@ export class SpeechPlaybackController {
     this.setState('loading')
     reader.setSpeechSegmentHighlight(segment.id)
     reader.scrollToSpeechSegment(segment.id)
+
+    if (this.delegate.getSettings().ttsEngine === 'system') {
+      try {
+        await this.playSystemText(text, () => {
+          if (session !== this.session || this.disposed) return
+          if (this.chunkIndex + 1 < chunks.length) {
+            this.chunkIndex += 1
+          } else {
+            this.chunkIndex = 0
+            this.segmentIndex += 1
+          }
+          void this.playCurrent()
+        })
+      } catch (error) {
+        if (session !== this.session || this.disposed) return
+        this.fail(error instanceof Error ? error.message : '离线朗读失败')
+      }
+      return
+    }
 
     try {
       const result = await this.synthesizeText(text)
@@ -326,6 +358,49 @@ export class SpeechPlaybackController {
     this.setState('playing')
   }
 
+  private playSystemText(text: string, onEnded: () => void): Promise<void> {
+    const synth = typeof window !== 'undefined' ? window.speechSynthesis : null
+    if (!synth || typeof SpeechSynthesisUtterance === 'undefined') {
+      return Promise.reject(new Error('当前系统不支持离线朗读'))
+    }
+    this.pauseAudio()
+
+    const settings = this.delegate.getSettings()
+    const utterance = new SpeechSynthesisUtterance(text)
+    const voices = synth
+      .getVoices()
+      .map((voice) => ({ name: voice.name, lang: voice.lang, voice }))
+    const selected = selectSystemVoice(
+      voices.map(({ name, lang }) => ({ name, lang })),
+      settings.systemTtsVoice
+    )
+    if (selected) {
+      const voice = voices.find((item) => item.name === selected.name)?.voice
+      if (voice) utterance.voice = voice
+      utterance.lang = voice?.lang ?? selected.lang
+    } else {
+      utterance.lang = 'zh-CN'
+    }
+    utterance.rate = Math.max(0.5, Math.min(2, settings.ttsRate))
+    utterance.volume = Math.max(0, Math.min(1, settings.ttsVolume))
+    utterance.onend = () => {
+      if (this.utterance !== utterance) return
+      this.utterance = null
+      onEnded()
+    }
+    utterance.onerror = (event) => {
+      if (this.utterance !== utterance) return
+      this.utterance = null
+      if (event.error !== 'interrupted' && event.error !== 'canceled') {
+        this.fail('离线朗读失败')
+      }
+    }
+    this.utterance = utterance
+    synth.speak(utterance)
+    this.setState('playing')
+    return Promise.resolve()
+  }
+
   private fail(message: string): void {
     this.pauseAudio()
     this.delegate.getReader()?.setSpeechSegmentHighlight(null)
@@ -343,12 +418,20 @@ export class SpeechPlaybackController {
   }
 
   private pauseAudio(): void {
+    this.cancelSystemSpeech()
     if (this.audio) {
       this.audio.onended = null
       this.audio.onerror = null
       this.audio.pause()
     }
     this.releaseAudio()
+  }
+
+  private cancelSystemSpeech(): void {
+    this.utterance = null
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
   }
 
   private releaseAudio(): void {
@@ -366,11 +449,23 @@ export class SpeechPlaybackController {
   }
 }
 
+function findSelectionStartIndex(
+  snapshot: ReaderSpeechSnapshot,
+  startText?: string
+): number | null {
+  const selected = startText?.replace(/\s+/g, '') ?? ''
+  if (!selected) return null
+  const probe = selected.slice(0, 24)
+  const index = snapshot.segments.findIndex((segment) =>
+    segment.text.replace(/\s+/g, '').includes(probe)
+  )
+  return index >= 0 ? index : null
+}
+
 function speechCacheKey(
   text: string,
   settings: Pick<ReaderSettings, 'ttsVoice' | 'ttsRate' | 'ttsVolume'>
-): string {
-  return [
+): string {  return [
     settings.ttsVoice,
     settings.ttsRate.toFixed(2),
     settings.ttsVolume.toFixed(2),

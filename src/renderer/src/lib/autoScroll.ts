@@ -15,14 +15,23 @@ interface SegmenterLike {
 }
 
 /**
- * Continuous auto-scroll speed in CSS pixels per second for a 1-10 level.
- * Replaces the old "one sentence every N milliseconds" cadence.
+ * Continuous auto-scroll speed in CSS pixels per second for a 1-100 level.
+ * Two exponential segments share a knot at level 20: the low band spreads
+ * 4-20 px/s over 20 levels so each step feels distinctly slower, while the
+ * 20-120 px/s band keeps mid/high levels nearly unchanged.
  */
+const AUTO_SCROLL_LOW_SEGMENT_LEVELS = 20
+
 export function autoScrollPixelsPerSecond(speed: number): number {
   const normalized = normalizeAutoScrollSpeed(speed)
-  const slowest = 14
+  if (normalized <= AUTO_SCROLL_LOW_SEGMENT_LEVELS) {
+    const slowest = 4
+    const lowBand = 20
+    return slowest * (lowBand / slowest) ** ((normalized - 1) / (AUTO_SCROLL_LOW_SEGMENT_LEVELS - 1))
+  }
+  const lowBand = 20
   const fastest = 120
-  return slowest * (fastest / slowest) ** ((normalized - 1) / 99)
+  return lowBand * (fastest / lowBand) ** ((normalized - AUTO_SCROLL_LOW_SEGMENT_LEVELS) / (100 - AUTO_SCROLL_LOW_SEGMENT_LEVELS))
 }
 
 export const AUTO_SCROLL_MIN_SPEED = 1

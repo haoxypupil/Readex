@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   BookCopy,
   BookOpen,
   ChevronLeft,
@@ -6,11 +7,13 @@ import {
   FilePlus2,
   Library,
   NotebookPen,
+  Search,
   Settings,
   ShieldCheck,
   X
 } from 'lucide-react'
 import type { BookRecord } from '@shared/types'
+import { bookCoverSrc } from '../lib/covers'
 import { bookFormatLabel, formatPercent } from '../lib/format'
 import logoUrl from '../assets/readex-logo.png'
 
@@ -19,9 +22,11 @@ interface SidebarProps {
   books: BookRecord[]
   workspaceIds: string[]
   activeBookId: string | null
-  currentView: 'library' | 'notes' | 'book'
+  currentView: 'library' | 'notes' | 'search' | 'stats' | 'book'
   onToggle: () => void
   onOpenLibrary: () => void
+  onOpenStats: () => void
+  onOpenSearch: () => void
   onOpenBook: (bookId: string) => void
   onCloseWorkspace: (bookId: string) => void
   onOpenNotes: () => void
@@ -38,6 +43,8 @@ export function Sidebar({
   currentView,
   onToggle,
   onOpenLibrary,
+  onOpenStats,
+  onOpenSearch,
   onOpenBook,
   onCloseWorkspace,
   onOpenNotes,
@@ -71,6 +78,22 @@ export function Sidebar({
         >
           <Library size={18} />
         </button>
+        <button
+          className={`sidebar-rail-button ${currentView === 'stats' ? 'active' : ''}`}
+          type="button"
+          title="阅读统计"
+          onClick={onOpenStats}
+        >
+          <BarChart3 size={18} />
+        </button>
+        <button
+          className={`sidebar-rail-button ${currentView === 'search' ? 'active' : ''}`}
+          type="button"
+          title="全文搜索"
+          onClick={onOpenSearch}
+        >
+          <Search size={18} />
+        </button>
         <div className="rail-divider" />
         {workspaceBooks.slice(0, 8).map((book) => (
           <button
@@ -80,8 +103,8 @@ export function Sidebar({
             title={book.title}
             onClick={() => onOpenBook(book.id)}
           >
-            {book.coverDataUrl ? (
-              <img src={book.coverDataUrl} alt="" />
+            {bookCoverSrc(book) ? (
+              <img src={bookCoverSrc(book)} alt="" />
             ) : (
               <span>{book.title.slice(0, 1).toUpperCase()}</span>
             )}
@@ -130,6 +153,22 @@ export function Sidebar({
           <NotebookPen size={16} />
           <span>所有笔记</span>
         </button>
+        <button
+          className={`sidebar-entry ${currentView === 'stats' ? 'active' : ''}`}
+          type="button"
+          onClick={onOpenStats}
+        >
+          <BarChart3 size={16} />
+          <span>阅读统计</span>
+        </button>
+        <button
+          className={`sidebar-entry ${currentView === 'search' ? 'active' : ''}`}
+          type="button"
+          onClick={onOpenSearch}
+        >
+          <Search size={16} />
+          <span>全文搜索</span>
+        </button>
       </nav>
 
       <div className="sidebar-section-heading">
@@ -151,8 +190,8 @@ export function Sidebar({
             >
               <button className="workspace-main" type="button" onClick={() => onOpenBook(book.id)}>
                 <span className="workspace-cover">
-                  {book.coverDataUrl ? (
-                    <img src={book.coverDataUrl} alt="" />
+                  {bookCoverSrc(book) ? (
+                    <img src={bookCoverSrc(book)} alt="" />
                   ) : (
                     <BookOpen size={17} />
                   )}

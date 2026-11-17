@@ -44,6 +44,8 @@ export interface ReaderHandle {
   setSpeechSegmentHighlight: (segmentId: string | null) => void
   /** Load the next mounted section and report whether the snapshot changed. */
   advanceSpeechSection: () => Promise<boolean>
+  /** Highlight the currently navigated search hit; null clears it. */
+  setSearchHighlight: (result: SearchResult | null) => void
 }
 
 export interface ReaderProps {
@@ -59,5 +61,7 @@ export interface ReaderProps {
   onError: (message: string) => void
   /** Fired when continuous auto-scroll reaches the end of the document. */
   onAutoScrollEnd?: () => void
+  /** 漫画双页开关（全局阅读设置）。 */
+  onComicTwoPageChange?: (enabled: boolean) => void
   floatingDragHandlers?: FloatingDragHandlers
 }

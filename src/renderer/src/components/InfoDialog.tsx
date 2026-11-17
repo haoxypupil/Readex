@@ -39,6 +39,8 @@ export function InfoDialog({ mode, version, onClose }: InfoDialogProps): React.J
               ['导入图书', 'Ctrl+O'],
               ['阅读设置', 'Ctrl+,'],
               ['书内搜索', 'Ctrl+F'],
+              ['沉浸阅读', 'Ctrl+Shift+F'],
+              ['上一页 / 下一页', 'PageUp / PageDown 或 Space'],
               ['上一章 / 下一章', 'Ctrl+PageUp / PageDown'],
               ['添加或移除书签', 'Ctrl+D'],
               ['开始 / 暂停自动滚动', 'Ctrl+Shift+A'],

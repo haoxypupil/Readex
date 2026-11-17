@@ -17,6 +17,37 @@ export function NotesPanel({
   onDelete,
   onExport
 }: NotesPanelProps): React.JSX.Element {
+  const byNewest = (a: Annotation, b: Annotation): number =>
+    b.createdAt.localeCompare(a.createdAt)
+  const bookmarks = annotations.filter((annotation) => annotation.type === 'bookmark').sort(byNewest)
+  const notes = annotations.filter((annotation) => annotation.type !== 'bookmark').sort(byNewest)
+
+  const renderCard = (annotation: Annotation): React.JSX.Element => (
+    <article
+      className={`annotation-card ${activeId === annotation.id ? 'active' : ''}`}
+      key={annotation.id}
+    >
+      <button type="button" className="annotation-main" onClick={() => onSelect(annotation)}>
+        <span
+          className="annotation-color"
+          style={{ background: ANNOTATION_COLORS[annotation.color] }}
+        />
+        {annotation.type === 'bookmark' && <span className="annotation-kind">书签</span>}
+        <span className="annotation-quote">{annotation.text}</span>
+        {annotation.note && <span className="annotation-note">{annotation.note}</span>}
+        <time>{new Date(annotation.createdAt).toLocaleString('zh-CN')}</time>
+      </button>
+      <button
+        className="annotation-delete"
+        type="button"
+        title="删除"
+        onClick={() => onDelete(annotation)}
+      >
+        <Trash2 size={14} />
+      </button>
+    </article>
+  )
+
   return (
     <div className="side-panel-content">
       <div className="panel-title panel-title-actions">
@@ -34,35 +65,23 @@ export function NotesPanel({
         </div>
       ) : (
         <div className="annotation-list">
-          {[...annotations]
-            .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-            .map((annotation) => (
-              <article
-                className={`annotation-card ${activeId === annotation.id ? 'active' : ''}`}
-                key={annotation.id}
-              >
-                <button type="button" className="annotation-main" onClick={() => onSelect(annotation)}>
-                  <span
-                    className="annotation-color"
-                    style={{ background: ANNOTATION_COLORS[annotation.color] }}
-                  />
-                  {annotation.type === 'bookmark' && (
-                    <span className="annotation-kind">书签</span>
-                  )}
-                  <span className="annotation-quote">{annotation.text}</span>
-                  {annotation.note && <span className="annotation-note">{annotation.note}</span>}
-                  <time>{new Date(annotation.createdAt).toLocaleString('zh-CN')}</time>
-                </button>
-                <button
-                  className="annotation-delete"
-                  type="button"
-                  title="删除"
-                  onClick={() => onDelete(annotation)}
-                >
-                  <Trash2 size={14} />
-                </button>
-              </article>
-            ))}
+          {bookmarks.length > 0 && (
+            <>
+              <div className="annotation-group-title">
+                书签<span>{bookmarks.length}</span>
+              </div>
+              {bookmarks.map(renderCard)}
+            </>
+          )}
+          {notes.length > 0 && (
+            <>
+              <div className="annotation-group-title">
+                {bookmarks.length > 0 ? '高亮与笔记' : '全部标注'}
+                <span>{notes.length}</span>
+              </div>
+              {notes.map(renderCard)}
+            </>
+          )}
         </div>
       )}
     </div>

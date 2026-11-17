@@ -11,10 +11,13 @@ import {
 import path from 'node:path'
 import fs from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import type {
   Annotation,
   AppSettings,
+  BookMetadataPatch,
+  BookRecord,
   FloatingReaderSync,
   ImportBatchResult,
   ReadingLocator,
@@ -22,6 +25,7 @@ import type {
 } from '../shared/types'
 import { upgradeLegacyThemeColors } from '../shared/types'
 import { createTitleBarTheme, TITLE_BAR_HEIGHT } from '../shared/theme'
+import { normalizeBookTags } from '../shared/bookTags'
 import type { TtsSynthesisRequest } from '../shared/speech'
 import { AnnotationIndex } from './annotationIndex'
 import { registerBookProtocol, registerBookScheme } from './bookProtocol'
@@ -38,6 +42,7 @@ let floatingBookId: string | null = null
 let restoreMainAfterFloatingCloses = true
 let quitting = false
 let floatingDrag: { webContentsId: number; offsetX: number; offsetY: number } | null = null
+let activeImportCancel: { cancelled: boolean } | null = null
 const rendererRecoveryAttempts = new WeakMap<BrowserWindow, number>()
 const rendererRecoveryTimers = new WeakMap<BrowserWindow, NodeJS.Timeout>()
 const rendererTargets = new WeakMap<BrowserWindow, string>()
@@ -266,6 +271,14 @@ async function openFloatingReader(
     }
   })
   secureWindow(floatingWindow)
+  if (settings.reader.floatingReaderStealth) {
+    floatingWindow.setHasShadow(false)
+    try {
+      floatingWindow.setAccentColor(false)
+    } catch {
+      // 旧系统不支持该属性时忽略。
+    }
+  }
   floatingBookId = bookId
   restoreMainAfterFloatingCloses = true
   floatingWindow.on('closed', () => {
@@ -335,7 +348,7 @@ function registerIpc(): void {
       filters: [
         {
           name: '电子书',
-          extensions: ['epub', 'mobi', 'pdf', 'txt']
+          extensions: ['epub', 'mobi', 'azw3', 'pdf', 'txt', 'cbz']
         },
         { name: '所有文件', extensions: ['*'] }
       ]
@@ -344,10 +357,55 @@ function registerIpc(): void {
     return importWithProgress(result.filePaths)
   })
   ipcMain.handle('library:import-paths', (_, paths: string[]) => importWithProgress(paths))
+  ipcMain.handle('library:cancel-import', () => {
+    if (!activeImportCancel) return false
+    activeImportCancel.cancelled = true
+    return true
+  })
   ipcMain.handle('library:remove', async (_, bookId: string, deleteSource: boolean) => {
     await storage.removeBook(bookId, deleteSource)
     annotationIndex.invalidate()
   })
+  ipcMain.handle(
+    'library:update-metadata',
+    async (_, bookId: string, patch: BookMetadataPatch) => {
+      const text = (value: unknown, max: number): string =>
+        typeof value === 'string' ? value.trim().slice(0, max) : ''
+      const updates: Partial<BookRecord> = {
+        title: text(patch?.title, 240) || '未命名书籍',
+        author: text(patch?.author, 120) || '未知作者',
+        publisher: text(patch?.publisher, 160),
+        description: text(patch?.description, 2000),
+        language: text(patch?.language, 24),
+        tags: normalizeBookTags(patch?.tags)
+      }
+      // 阅读方向只在明确给出 ltr/rtl 时写入，避免局部补丁误清已有方向。
+      if (patch?.readingDirection === 'ltr' || patch?.readingDirection === 'rtl') {
+        updates.readingDirection = patch.readingDirection
+      }
+      const book = await storage.updateBook(bookId, updates)
+      // 书标题会进入全局笔记索引，改完后让索引按需重建。
+      annotationIndex.invalidate()
+      return book
+    }
+  )
+  ipcMain.handle('library:choose-cover', async (_, bookId: string) => {
+    if (!mainWindow) return null
+    const book = await storage.getBookRecord(bookId)
+    if (!book) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择封面图片',
+      properties: ['openFile'],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }]
+    })
+    const filePath = result.filePaths[0]
+    if (result.canceled || !filePath) return null
+    return storage.replaceCover(bookId, filePath)
+  })
+  ipcMain.handle(
+    'library:save-generated-cover',
+    (_, bookId: string, dataUrl: string) => storage.saveGeneratedCover(bookId, dataUrl)
+  )
   ipcMain.handle('library:reveal', async (_, bookId: string) => {
     const book = await storage.getBookRecord(bookId)
     if (!book) return
@@ -388,9 +446,13 @@ function registerIpc(): void {
     async (_, bookId: string, markdown: string): Promise<boolean> => {
       if (!mainWindow) return false
       const book = await storage.getBookRecord(bookId)
+      const defaultName =
+        bookId === 'library'
+          ? 'Readex-全部笔记'
+          : `${book?.title ?? 'Readex-notes'}-notes`
       const result = await dialog.showSaveDialog(mainWindow, {
         title: '导出 Markdown 笔记',
-        defaultPath: `${sanitizeFileName(book?.title ?? 'Readex-notes')}-notes.md`,
+        defaultPath: `${sanitizeFileName(defaultName)}.md`,
         filters: [{ name: 'Markdown', extensions: ['md'] }]
       })
       if (result.canceled || !result.filePath) return false
@@ -407,9 +469,17 @@ function registerIpc(): void {
     (_, bookId: string, locator: ReadingLocator, progress: number) =>
       storage.saveReadingState(bookId, locator, progress)
   )
+  ipcMain.handle('stats:get', () => storage.getStats())
+  ipcMain.handle('stats:add', (_, bookId: string, seconds: number) =>
+    storage.addReadingTime(bookId, seconds)
+  )
 
   ipcMain.handle('search:global', async (_, query: string): Promise<SearchResult[]> => {
     return annotationIndex.search(query)
+  })
+  ipcMain.handle('search:global-text', async (_, query: string): Promise<SearchResult[]> => {
+    const { searchLibraryContent } = await import('./fulltext')
+    return searchLibraryContent(storage, query)
   })
   ipcMain.handle(
     'search:in-book',
@@ -423,6 +493,8 @@ function registerIpc(): void {
 
   ipcMain.handle('profile:info', () => storage.getProfileInfo())
   ipcMain.handle('profile:backup', () => backupProfile())
+  ipcMain.handle('profile:restore', () => restoreProfile())
+  ipcMain.handle('profile:clear-tts-cache', () => storage.clearTtsCache())
   ipcMain.handle('profile:clear', async () => {
     await storage.resetPersonalData()
     annotationIndex.invalidate()
@@ -457,6 +529,17 @@ function registerIpc(): void {
   )
   ipcMain.handle('window:minimize-floating-reader', () => floatingWindow?.minimize())
   ipcMain.handle('window:close-floating-reader', () => hideFloatingReader())
+  ipcMain.handle('window:set-floating-reader-shadow', (_, enabled: boolean) => {
+    if (!floatingWindow || floatingWindow.isDestroyed()) return
+    const stealth = !enabled
+    floatingWindow.setHasShadow(enabled)
+    // 隐身时隐藏 Windows 系统边框（DWMWA_BORDER_COLOR），退出时恢复系统默认。
+    try {
+      floatingWindow.setAccentColor(stealth ? false : null)
+    } catch {
+      // 旧系统不支持该属性时忽略。
+    }
+  })
   ipcMain.handle('window:begin-floating-drag', (event, screenX: number, screenY: number) => {
     if (!floatingWindow || floatingWindow.isDestroyed()) return false
     if (event.sender.id !== floatingWindow.webContents.id) return false
@@ -530,11 +613,18 @@ async function importWithProgress(
   filePaths: string[]
 ): Promise<ImportBatchResult> {
   const { importBookPaths } = await import('./importer')
-  const result = await importBookPaths(storage, filePaths, {
-    onProgress: (event) => mainWindow?.webContents.send('import:progress', event)
-  })
-  annotationIndex.invalidate()
-  return result
+  const cancelToken = { cancelled: false }
+  activeImportCancel = cancelToken
+  try {
+    const result = await importBookPaths(storage, filePaths, {
+      onProgress: (event) => mainWindow?.webContents.send('import:progress', event),
+      shouldCancel: () => cancelToken.cancelled
+    })
+    annotationIndex.invalidate()
+    return result
+  } finally {
+    if (activeImportCancel === cancelToken) activeImportCancel = null
+  }
 }
 
 async function backupProfile(): Promise<{ canceled: boolean; filePath?: string }> {
@@ -565,6 +655,88 @@ async function backupProfile(): Promise<{ canceled: boolean; filePath?: string }
 
 function sanitizeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 80).trim() || 'Readex'
+}
+
+const MAX_RESTORE_BYTES = 2 * 1024 * 1024 * 1024
+
+async function restoreProfile(): Promise<{ restored: boolean; message?: string }> {
+  if (!mainWindow) return { restored: false, message: '主窗口不可用' }
+  if (activeImportCancel) return { restored: false, message: '请等待当前导入完成后再恢复' }
+
+  const selection = await dialog.showOpenDialog(mainWindow, {
+    title: '从备份恢复个人资料',
+    properties: ['openFile'],
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }]
+  })
+  const zipPath = selection.filePaths[0]
+  if (selection.canceled || !zipPath) return { restored: false }
+
+  const zipStat = await fs.stat(zipPath).catch(() => null)
+  if (!zipStat?.isFile()) return { restored: false, message: '无法读取备份文件' }
+  if (zipStat.size > MAX_RESTORE_BYTES) {
+    return { restored: false, message: '备份文件超过 2 GB，暂不支持恢复' }
+  }
+
+  const { default: JSZip } = await import('jszip')
+  const archive = await JSZip.loadAsync(await fs.readFile(zipPath)).catch(() => null)
+  if (!archive) return { restored: false, message: '备份文件不是有效的 ZIP' }
+
+  const entries = Object.values(archive.files).filter(
+    (entry) => !entry.dir && entry.name.startsWith('personal/')
+  )
+  if (!entries.some((entry) => entry.name === 'personal/library.json')) {
+    return { restored: false, message: '不是有效的 Readex 备份：缺少 personal/library.json' }
+  }
+
+  const paths = storage.getPaths()
+  const tempRoot = path.join(paths.cache, `restore-${randomUUID()}`)
+  const tempPersonal = path.join(tempRoot, 'personal')
+  await fs.mkdir(tempPersonal, { recursive: true })
+
+  try {
+    for (const entry of entries) {
+      const relative = entry.name.slice('personal/'.length)
+      if (!relative) continue
+      const target = path.resolve(tempPersonal, relative)
+      if (target !== tempPersonal && !target.startsWith(tempPersonal + path.sep)) {
+        throw new Error('备份包含不安全的路径')
+      }
+      await fs.mkdir(path.dirname(target), { recursive: true })
+      await fs.writeFile(target, await entry.async('nodebuffer'))
+    }
+  } catch (error) {
+    await fs.rm(tempRoot, { recursive: true, force: true })
+    return {
+      restored: false,
+      message: `恢复失败：${error instanceof Error ? error.message : '无法解压备份'}`
+    }
+  }
+
+  const previous = path.join(paths.cache, `personal-previous-${Date.now()}`)
+  try {
+    await fs.rename(paths.personal, previous)
+  } catch {
+    await fs.rm(tempRoot, { recursive: true, force: true })
+    return { restored: false, message: '无法替换个人资料目录，请关闭正在阅读的书籍后重试' }
+  }
+
+  try {
+    await fs.rename(tempPersonal, paths.personal)
+  } catch (error) {
+    await fs.rename(previous, paths.personal).catch(() => undefined)
+    await fs.rm(tempRoot, { recursive: true, force: true })
+    return {
+      restored: false,
+      message: `恢复失败：${error instanceof Error ? error.message : '无法写入个人资料目录'}`
+    }
+  }
+
+  await fs.rm(previous, { recursive: true, force: true }).catch(() => undefined)
+  await fs.rm(tempRoot, { recursive: true, force: true }).catch(() => undefined)
+  storage.resetProgressSync()
+  annotationIndex.invalidate()
+  await storage.initialize()
+  return { restored: true }
 }
 
 app.whenReady().then(async () => {

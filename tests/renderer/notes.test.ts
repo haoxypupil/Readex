@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annotationsToMarkdown } from '../../src/renderer/src/lib/notes'
+import { annotationsToMarkdown, createAnnotationUpdate } from '../../src/renderer/src/lib/notes'
 import type { Annotation, BookRecord } from '../../src/shared/types'
 
 describe('Markdown note export', () => {
@@ -72,5 +72,51 @@ describe('Markdown note export', () => {
 
     expect(markdown).toContain('## 书签')
     expect(markdown).toContain('> 书签位置')
+  })
+})
+
+describe('annotation revision history', () => {
+  const base: Annotation = {
+    id: 'a1',
+    bookId: 'book-1',
+    type: 'comment',
+    color: 'blue',
+    text: '原文',
+    note: '旧想法',
+    locator: { type: 'epub-cfi', value: 'epubcfi(/6/2)' },
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z'
+  }
+
+  it('stores the previous note when content changes', () => {
+    const updated = createAnnotationUpdate(base, 'green', '新想法', '2026-01-02T00:00:00.000Z')
+
+    expect(updated.note).toBe('新想法')
+    expect(updated.color).toBe('green')
+    expect(updated.revisions?.[0]).toEqual({
+      note: '旧想法',
+      color: 'blue',
+      updatedAt: '2026-01-01T00:00:00.000Z'
+    })
+  })
+
+  it('does not add a revision when nothing changed', () => {
+    const updated = createAnnotationUpdate(base, base.color, base.note, '2026-01-02T00:00:00.000Z')
+
+    expect(updated.revisions).toBeUndefined()
+    expect(updated.updatedAt).toBe('2026-01-02T00:00:00.000Z')
+  })
+
+  it('keeps at most ten revisions', () => {
+    let current = base
+    for (let index = 0; index < 12; index += 1) {
+      current = createAnnotationUpdate(
+        current,
+        'blue',
+        `版本 ${index}`,
+        `2026-01-02T00:00:${String(index).padStart(2, '0')}.000Z`
+      )
+    }
+    expect(current.revisions).toHaveLength(10)
   })
 })

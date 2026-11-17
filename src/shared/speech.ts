@@ -19,6 +19,28 @@ export const TTS_MIN_VOLUME = 0
 export const TTS_MAX_VOLUME = 1
 export const TTS_MAX_TEXT_LENGTH = 4000
 
+export type TtsEngine = 'online' | 'system'
+
+export interface SystemVoiceLike {
+  name: string
+  lang: string
+}
+
+/** 优先使用用户选中的系统语音，其次中文语音，最后回退到第一个可用语音。 */
+export function selectSystemVoice(
+  voices: readonly SystemVoiceLike[],
+  preferred?: string
+): SystemVoiceLike | null {
+  if (!voices.length) return null
+  const wanted = preferred?.trim()
+  return (
+    (wanted ? voices.find((voice) => voice.name === wanted) : undefined) ??
+    voices.find((voice) => /^zh(-|_)/i.test(voice.lang)) ??
+    voices.find((voice) => /^zh/i.test(voice.lang)) ??
+    voices[0]
+  )
+}
+
 export interface TtsSynthesisRequest {
   text: string
   voice: string

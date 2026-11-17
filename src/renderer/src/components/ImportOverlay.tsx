@@ -1,13 +1,21 @@
-import { Check, FileWarning, LoaderCircle, SkipForward } from 'lucide-react'
+import { useState } from 'react'
+import { Check, FileWarning, LoaderCircle, SkipForward, X } from 'lucide-react'
 import type { ImportJob } from '@shared/types'
 
 interface ImportOverlayProps {
   jobs: ImportJob[]
   completed: number
   total: number
+  onCancel?: () => void
 }
 
-export function ImportOverlay({ jobs, completed, total }: ImportOverlayProps): React.JSX.Element {
+export function ImportOverlay({
+  jobs,
+  completed,
+  total,
+  onCancel
+}: ImportOverlayProps): React.JSX.Element {
+  const [cancelling, setCancelling] = useState(false)
   const current = jobs.find((job) => job.status === 'checking' || job.status === 'importing')
   const visibleJobs = jobs.slice(-4)
 
@@ -34,6 +42,8 @@ export function ImportOverlay({ jobs, completed, total }: ImportOverlayProps): R
                   <Check size={15} />
                 ) : job.status === 'skipped' ? (
                   <SkipForward size={15} />
+                ) : job.status === 'cancelled' ? (
+                  <X size={14} />
                 ) : job.status === 'failed' ? (
                   <FileWarning size={15} />
                 ) : (
@@ -45,6 +55,21 @@ export function ImportOverlay({ jobs, completed, total }: ImportOverlayProps): R
             </div>
           ))}
         </div>
+        {onCancel && (current || jobs.some((job) => job.status === 'queued')) && (
+          <div className="import-actions">
+            <button
+              className="text-button"
+              type="button"
+              disabled={cancelling}
+              onClick={() => {
+                setCancelling(true)
+                onCancel()
+              }}
+            >
+              {cancelling ? '正在取消剩余任务…' : '取消剩余任务'}
+            </button>
+          </div>
+        )}
       </section>
     </div>
   )

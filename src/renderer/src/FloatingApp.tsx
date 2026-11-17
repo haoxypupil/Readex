@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Minus, X } from 'lucide-react'
+import { Eye, EyeOff, Minus, X } from 'lucide-react'
 import type { AppSettings, BookRecord, ReadingLocator } from '@shared/types'
 import { DEFAULT_SETTINGS, upgradeLegacyThemeColors } from '@shared/types'
 import { useFloatingWindowDrag } from './lib/floatingDrag'
@@ -53,9 +53,25 @@ export function FloatingApp(): React.JSX.Element {
     })
   }, [])
 
+  const stealth = settings.reader.floatingReaderStealth
+
+  // 隐身开关同时更新设置并即时同步窗口阴影。
+  const toggleStealth = (): void => {
+    const next = !stealth
+    setSettings((current) => {
+      const nextSettings = {
+        ...current,
+        reader: { ...current.reader, floatingReaderStealth: next }
+      }
+      void window.readex.settings.update(nextSettings)
+      return nextSettings
+    })
+    void window.readex.windowControl.setFloatingReaderShadow(!next)
+  }
+
   return (
     <div
-      className="floating-reader-shell"
+      className={`floating-reader-shell ${stealth ? 'floating-reader-stealth' : ''}`}
       data-app-theme={settings.reader.theme}
       style={createAppThemeStyle(settings.reader)}
       onPointerDownCapture={(event) => {
@@ -68,7 +84,23 @@ export function FloatingApp(): React.JSX.Element {
       onPointerCancelCapture={(event) => floatingDrag.onPointerUp(event.nativeEvent)}
     >
       <div className="floating-reader-top-drag-region" aria-hidden="true" />
+      {stealth && (
+        <>
+          <div className="floating-reader-edge-fade-left" aria-hidden="true" />
+          <div className="floating-reader-edge-fade-right" aria-hidden="true" />
+        </>
+      )}
       <div className="floating-reader-window-actions">
+        <button
+          className={`floating-reader-stealth-toggle ${stealth ? 'active' : ''}`}
+          type="button"
+          title={stealth ? '退出隐身模式' : '隐身模式：隐藏边框与按钮，仅保留正文'}
+          aria-label={stealth ? '退出隐身模式' : '进入隐身模式'}
+          aria-pressed={stealth}
+          onClick={toggleStealth}
+        >
+          {stealth ? <Eye size={15} strokeWidth={2} /> : <EyeOff size={15} strokeWidth={2} />}
+        </button>
         <button
           className="floating-reader-minimize"
           type="button"
@@ -119,6 +151,16 @@ export function FloatingApp(): React.JSX.Element {
                 const next = {
                   ...current,
                   reader: { ...current.reader, ...patch }
+                }
+                void window.readex.settings.update(next)
+                return next
+              })
+            }}
+            onComicTwoPageChange={(comicTwoPage) => {
+              setSettings((current) => {
+                const next = {
+                  ...current,
+                  reader: { ...current.reader, comicTwoPage }
                 }
                 void window.readex.settings.update(next)
                 return next

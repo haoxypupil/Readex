@@ -15,13 +15,19 @@ describe('import validation', () => {
     expect(() =>
       validateFileHeader('mobi', Buffer.concat([Buffer.alloc(60), Buffer.from('BOOKMOBI')]))
     ).not.toThrow()
+    expect(() =>
+      validateFileHeader('azw3', Buffer.concat([Buffer.alloc(60), Buffer.from('BOOKMOBI')]))
+    ).not.toThrow()
     expect(() => validateFileHeader('txt', Buffer.from('第一章\n你好'))).not.toThrow()
+    expect(() => validateFileHeader('cbz', Buffer.from([0x50, 0x4b, 0x03, 0x04]))).not.toThrow()
   })
 
   it('rejects mismatched or binary files', () => {
     expect(() => validateFileHeader('pdf', Buffer.from('not pdf'))).toThrow(/PDF/)
     expect(() => validateFileHeader('epub', Buffer.from('not zip'))).toThrow(/EPUB/)
+    expect(() => validateFileHeader('cbz', Buffer.from('not zip'))).toThrow(/CBZ/)
     expect(() => validateFileHeader('mobi', Buffer.from('not mobi'))).toThrow(/MOBI/)
+    expect(() => validateFileHeader('azw3', Buffer.from('not azw3'))).toThrow(/AZW3/)
     expect(() => validateFileHeader('txt', Buffer.from([1, 0, 0, 0, 2]))).toThrow(/二进制/)
   })
 

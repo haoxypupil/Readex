@@ -2,8 +2,8 @@
 
 > - 项目：Readex 本地电子书阅读器
 > - 作者：Xiaoyao.Hao
-> - 当前版本：0.1.0
-> - 文档日期：2026-09-14
+> - 当前版本：0.2.0
+> - 文档日期：2026-11-17
 > - 目标平台：Windows 10/11 x64
 
 本文档是 Readex 当前阶段的完整设计、内部逻辑、实现约束、性能优化、测试和发布说明，用于代码维护、功能扩展、故障排查和后续接续开发。
@@ -18,7 +18,7 @@
 2. 应用采用什么技术架构，为什么选择 Electron 和 React。
 3. 主进程、preload、渲染进程之间如何通信。
 4. 图书、笔记、设置和进度如何存储，为什么这样设计。
-5. EPUB、MOBI/KF8、PDF、TXT 如何导入、解析、显示和定位。
+5. EPUB、MOBI/KF8、AZW3、PDF、TXT 如何导入、解析、显示和定位。
 6. 高亮、笔记、书签和 Markdown 导出如何工作。
 7. 主题、字体、阅读宽度和精细滚动如何联动。
 8. 为什么使用便携数据目录，如何执行备份和清空。
@@ -44,7 +44,7 @@ Readex 是一套面向个人用户的本地电子书阅读器，强调：
 ### 2.1 目标用户
 
 - 希望把电子书集中保存在本机并离线阅读的用户
-- 需要 EPUB、MOBI、PDF、TXT 统一阅读入口的用户
+- 需要 EPUB、MOBI、AZW3、PDF、TXT 统一阅读入口的用户
 - 希望在阅读中高亮、写笔记、添加书签并导出的用户
 - 希望绿色版可直接复制、发送和迁移的用户
 
@@ -337,12 +337,15 @@ data/
   personal/
     settings.json
     library.json
+    stats.json
     books/
       <bookId>/
         source.epub
         source.mobi
         source.pdf
         source.txt
+        source.cbz
+        cover.jpg
         metadata.json
         annotations.json
         reading-state.json
@@ -386,7 +389,7 @@ data/
 ### 8.1 图书格式
 
 ```ts
-type BookFormat = 'epub' | 'mobi' | 'pdf' | 'txt'
+type BookFormat = 'epub' | 'mobi' | 'azw3' | 'pdf' | 'txt' | 'cbz'
 ```
 
 ### 8.2 BookRecord
@@ -408,7 +411,10 @@ type BookFormat = 'epub' | 'mobi' | 'pdf' | 'txt'
 | `language` | 语言 |
 | `publisher` | 出版社 |
 | `description` | 描述 |
-| `coverDataUrl` | 封面 Data URL |
+| `coverDataUrl` | 已废弃：旧版本内嵌封面 Data URL，启动时迁移 |
+| `coverFile` | 封面文件名，例如 `cover.jpg` |
+| `tags` | 用户标签，最多 8 个 |
+| `readingDirection` | 漫画阅读方向，ltr 或 rtl，缺省 ltr |
 | `chapterCount` | 解析出的章节或页数 |
 | `progress` | 0 到 1 |
 | `lastLocation` | 最近阅读定位 |
@@ -429,6 +435,13 @@ interface ReaderSettings {
   contentWidth: number
   floatingReaderWidth: number
   floatingReaderHeight: number
+  readingLayout: 'scroll' | 'paginated'
+  pageColumns: 1 | 2
+  dailyReadingGoalMinutes: number
+  pdfTwoPage: boolean
+  comicTwoPage: boolean
+  ttsEngine: 'online' | 'system'
+  systemTtsVoice: string
   pdfScale: number
   wheelScrollStep: number
   smoothScrolling: boolean
@@ -448,6 +461,13 @@ interface ReaderSettings {
 内容宽度：860px
 浮框宽度：默认跟随内容宽度（860px）
 浮框高度：200px
+阅读布局：连续滚动
+分页栏数：1
+每日阅读目标：0（不设目标）
+PDF 双页：关闭
+漫画双页：关闭
+听书引擎：在线神经语音
+系统语音：自动选择中文语音
 PDF 自适应倍率：1
 滚轮步长：48px
 平滑滚动：开启
@@ -491,8 +511,15 @@ interface Annotation {
   locator: ReadingLocator
   createdAt: string
   updatedAt: string
+  revisions?: Array<{
+    note: string
+    color: AnnotationColor
+    updatedAt: string
+  }>
 }
 ```
+
+编辑已有标注时，如果笔记或颜色发生变化，旧版本会压入 `revisions`，最多保留 10 条；内容未变化只更新时间。
 
 书签复用注解模型：
 
@@ -529,11 +556,12 @@ color = blue
 
 ### 9.3 串行队列
 
-书库和设置分别使用 promise 队列：
+书库、设置和阅读统计分别使用 promise 队列：
 
 ```text
 libraryWrite
 settingsWrite
+statsWrite
 ```
 
 避免多个写操作并发覆盖。
@@ -560,13 +588,14 @@ API 命名空间：
 
 | 命名空间 | 能力 |
 | --- | --- |
-| `library` | 列表、导入、移除、定位文件 |
+| `library` | 列表、导入、取消导入、移除、更新元数据、更换封面、定位文件 |
 | `book` | 生成流式资源 URL、读取统一内容、单本记录 |
 | `annotations` | 按书或全量列表、保存、删除、导出 Markdown |
 | `settings` | 获取和保存设置 |
-| `search` | 全局笔记搜索、当前书搜索 |
+| `search` | 全局笔记搜索、跨书正文搜索、当前书搜索 |
 | `reading` | 获取和保存进度 |
-| `profile` | 信息、备份、清空、打开目录、复制路径 |
+| `stats` | 阅读统计读取与按秒累加 |
+| `profile` | 信息、备份、恢复、清空听书缓存、清空、打开目录、复制路径 |
 | `system` | 版本、文件路径、外部链接 |
 | `windowControl` | 最小化、最大化、关闭、全屏、标题栏主题 |
 | `import` | 导入进度事件 |
@@ -597,9 +626,14 @@ API 命名空间：
 ```text
 .epub
 .mobi
+.azw3
 .pdf
 .txt
+.cbz
 ```
+
+`.azw3`（KF8）与 `.mobi` 复合格式共用同一条解析管线：`openMobiDocument` 优先按
+MOBI7 解析，内容过少或失败时回退到 `initKf8File`，内容缓存与定位均以 mobi 语义存储。
 
 ### 11.3 导入流水线
 
@@ -617,6 +651,8 @@ flowchart TD
     J --> K[原子移动到 personal/books/bookId]
     K --> L[写入 library.json]
 ```
+
+批量导入在每本书开始前检查取消标记：已开始的单本会完成，其余任务标记为 `cancelled` 并停止。
 
 ### 11.4 文件头校验
 
@@ -673,6 +709,13 @@ bookId = sha256.slice(0, 20)
 - 作者写为“未知作者”
 - 根据前 2000 字符判断中英文
 
+#### CBZ
+
+- 标题回退文件名
+- 作者写为“未知作者”
+- 使用第一张图片生成封面
+- 图片数量写入 `chapterCount`
+
 ### 11.8 导入错误
 
 错误会分类显示：
@@ -696,6 +739,7 @@ interface BookContent {
   format: BookFormat
   toc: TocItem[]
   chapters?: NormalizedChapter[]
+  pages?: ComicPage[]
   text?: string
 }
 ```
@@ -769,6 +813,8 @@ patches/@lingo-reader__mobi-parser@0.4.6.patch
 - 优先在换行处分章
 - 段落转 HTML `<p>`
 - 保留纯文本用于搜索
+- 目录额外扫描“第 X 章”“序章”“番外”及英文 Chapter 等独占行标题，记录所在固定块的 `chapterId` 和章内 `start` 偏移
+- 标题少于两个时回退为“第 N 节”目录；固定块切分保持不变，因此既有笔记的文本偏移定位不受影响
 
 ### 12.5 PDF
 
@@ -779,6 +825,18 @@ PDF 在渲染进程由 pdf.js 处理：
 - 按可见区域延迟渲染
 - 当前页附近提前加载
 - 搜索按页读取文本内容
+
+### 12.6 CBZ
+
+CBZ 是包含图片的 ZIP 压缩包：
+
+- 使用 JSZip 列出条目，过滤 `__MACOSX/`、隐藏文件和非图片扩展名
+- 使用 `Intl.Collator` 的 numeric 模式自然排序，确保 `2.jpg` 排在 `10.jpg` 前
+- 首次打开解压到 `cache/parsed/<bookId>/pages`，按 `0001.jpg` 形式重命名，避免原文件名冲突
+- 写入 `content.json`，包含 `pages` 列表和按页生成的目录
+- 图片通过 `readex://comic/<bookId>/<index>` 按需读取，不把图片内嵌到 IPC 响应
+- 单页超过 20 MB 或总页数超过 3000 页时拒绝解析
+- 首张图片在导入时提取为封面
 
 ---
 
@@ -809,14 +867,18 @@ interface ReaderHandle {
 
 ### 13.2 EPUB 阅读器
 
-- 使用 epub.js 连续滚动
-- iframe 内部注入滚动和右键事件
+- 使用 epub.js；连续滚动模式使用 `scrolled-doc` + `continuous`，分页模式使用 `paginated` + `default`
+- 分页支持单栏和宽窗口双栏（`spread: auto` + `minSpreadWidth`）
+- 布局切换时重建 rendition，并用最近一次 relocated 的 CFI 恢复到当前页
+- `ResizeObserver` 在窗口、侧栏或布局尺寸变化时调用 `rendition.resize`
+- iframe 内部注入滚动、翻页和右键事件；分页模式滚轮直接翻页并做 320 ms 节流
+- 分页模式隐藏自动滚动控件并拒绝启动自动滚动；切换布局会停止听书和自动滚动
 - 记录 CFI
 - 高亮使用 epub.js annotations
 - 搜索加载 spine 项目并调用 `find`
 - 保存的空 CFI 会被忽略
 - 保存 CFI 失效时回退到书籍开头
-- 进度同时使用 relocated 和真实滚动高度
+- 滚动模式进度使用 relocated percentage 或真实滚动高度；分页模式使用 spine index 与页内页码回退
 
 ### 13.3 PDF 阅读器
 
@@ -830,6 +892,11 @@ interface ReaderHandle {
 - 每页先按阅读区可用宽度计算 fit-width 基础比例，再乘以用户设置的自适应倍率
 - 默认 `1×` 表示完整适应可用宽度，窗口和侧栏尺寸变化时自动重算
 - 放大会按同一基础比例放大，缩小适合概览多页内容
+- 可选夜间模式：给画布叠加 `invert(1) hue-rotate(180deg)` 滤镜，页面容器同步改为深色背景；文本层和标注层不反色
+- 可选双页：`.pdf-pages` 切换为两列网格，可用宽度按 `(容器宽 - 边距 - 22) / 2` 计算，逐页 Canvas 尺寸随之减半
+- 首次打开无封面 PDF 时，在渲染层用 pdf.js 以 0.35 倍比例渲染第一页，转 JPEG data URL 后交主进程写入 `cover.<ext>`
+- 听书复用统一句段接口：以当前页附近已渲染的文本层为根，按句生成 Range；当前页读完时滚动到后续页面并等待文本层渲染，最多尝试三页
+- 搜索结果在文本层中按“忽略空白”的文本匹配生成 Range，并用 `::highlight(rdx-search)` 标出；页面尚未渲染时最多重试 5 次
 
 PDF 元数据标题按原始字节解析：
 
@@ -840,13 +907,23 @@ PDF 元数据标题按原始字节解析：
 - 损坏标题回退到规范化的原始文件名，避免导入列表显示乱码。
 
 ### 13.4 MOBI/TXT 阅读器
-
 - 统一章节数组
 - 虚拟内容使用 `content-visibility`
 - 每个章节维护 DOM 引用
 - 选择文字时计算根节点文本偏移
 - 使用 CSS Custom Highlight API 显示高亮
 - 章节滚动时更新当前章节
+
+### 13.5 CBZ 阅读器
+
+- 单页图片以 `object-fit: contain` 适配阅读区
+- 左右按钮、滚轮、`Space`、`PageUp`、`PageDown` 和 `ArrowLeft`/`ArrowRight` 翻页；滚轮做 260 ms 节流
+- 阅读方向保存在书籍记录 `readingDirection`（ltr/rtl），阅读器右上角切换，日漫从右到左时左侧按钮和左方向键表示下一页
+- 宽窗口（阅读区至少 760 px）支持双页：固定 (1,2)、(3,4) 组合，起始页对齐奇数页，RTL 用 `row-reverse` 把首页放在右侧；双页为全局设置 `comicTwoPage`
+- 使用 `comic-page` locator 保存页码进度，目录按页生成；双页时进度记录起始页
+- 预加载下一页/下一组图片，图片经协议 `Cache-Control` 会话内复用
+- 不支持选择、高亮、搜索、自动滚动和听书，相关控件会隐藏或提示
+- 首屏封面由导入阶段生成，阅读阶段不再重复生成
 
 ---
 
@@ -1016,6 +1093,8 @@ PDF 元数据标题按原始字节解析：
 
 单次最多返回 200 条结果。
 
+搜索结果面板记录当前序号，支持上一条、下一条和循环跳转；EPUB 用 `rendition.annotations` 叠加橙色临时高亮，MOBI/TXT 用 `::highlight(rdx-search)`，PDF 仅定位到页。关闭搜索或切换书籍时清除临时高亮。
+
 ### 16.2 全局笔记搜索
 
 启动窗口后延迟构建只读注解索引，避免阻塞首屏：
@@ -1026,6 +1105,16 @@ PDF 元数据标题按原始字节解析：
 - 笔记大厅单独按需调用 `annotations.listAll`
 
 单次最多返回 200 条。
+
+笔记大厅在内存中支持按书籍、标注类型、时间顺序筛选和排序；全库导出时按书分组生成单一 Markdown，复用同一个保存对话框。
+
+### 16.3 跨书全文搜索
+
+- TXT/MOBI/AZW3 直接复用 `content.json` 中的章节纯文本，避免重复解析。
+- EPUB 首次搜索时读取 OPF spine，逐章提取 HTML 纯文本，并写入 `cache/parsed/<bookId>/fulltext.json`；缓存带版本号。
+- 搜索在每本书内按小写文本查找，构建统一 `SearchResult`：TXT/MOBI 使用精确文本偏移，EPUB 使用章节 href 定位。
+- 单本最多 30 条，总计最多 200 条；PDF 不进入全局索引。
+- 搜索页只读取缓存，不修改书库和个人资料；删除书籍时随 `parsed/<bookId>` 一起失效。
 
 ---
 
@@ -1163,11 +1252,16 @@ titleBarOverlay: {
 
 ### 18.3 书库
 
-- 搜索书名、作者、格式
+- 搜索书名、作者、格式、简介和文件名
+- 按最近活动、导入时间、书名、阅读进度排序
+- 按未读、在读、已读完筛选
 - 封面网格
 - 阅读进度
-- 文件大小
-- 导入日期
+- 最近活动日期
+- 编辑书名、作者、出版社、简介和标签
+- 标签筛选与卡片标签展示（最多显示 3 个）
+- 更换封面（文件保存到书籍目录，经 `readex://cover` 读取）
+- 首次打开无封面 PDF 时自动生成首屏封面
 - 定位原文件
 - 移除
 
@@ -1195,6 +1289,15 @@ titleBarOverlay: {
 - 阅读页边缘渐隐
 - 专注输入框光晕
 - 系统减少动态效果兼容
+
+### 18.6 沉浸阅读与阅读统计
+
+- 沉浸模式由 `Ctrl+Shift+F` 或视图菜单切换，隐藏阅读工具栏和状态栏；右上角保留低透明度退出按钮，`Escape` 也可退出
+- `Space`、`PageUp`、`PageDown` 整屏滚动，EPUB iframe 会把按键转发到宿主窗口
+- 阅读时长由 ReaderView 在窗口可见且有焦点时每 30 秒上报，主进程累加并写入 `personal/stats.json`
+- 统计页展示今日、最近 7 天、本月、今年、累计、连续天数、30 天热力条、年度月度柱状图、已读完数量和每本书时长；数据按本地日期聚合，最多保留 366 天
+- 年度回顾包含今年阅读时长、阅读天数、历史最长连续和 12 个月柱状图
+- 每日阅读目标保存在阅读设置中（0-600 分钟，界面范围 0-180），统计页按今日秒数显示进度和剩余时间
 
 ---
 
@@ -1245,7 +1348,7 @@ normalizedWheelDelta(deltaY, deltaMode, fineStep, viewportHeight)
 - PDF 按当前文本层逐句推进，到页尾后进入下一页。
 - 当前句使用 CSS Custom Highlight API 临时标注，不写入用户笔记。
 - 浅色标注自动使用深色文字，深色标注使用浅色文字，保证正文对比度。
-- 速度 1 到 100 级采用连续指数曲线，约对应 14px/s 到 120px/s。
+- 速度 1 到 100 级采用两段连续指数曲线（在 20 级处衔接）：低速段 4px/s 到 20px/s、每级约 9%，保证低档位体感差异；高速段 20px/s 到 120px/s。
 - 相邻级别速度连续变化，滑杆和加减按钮均使用整数级。
 - 推进使用 16ms 时间步进和内部小数位移累计，低速时不会因像素取整顿挫。
 - 播放/暂停按钮下方显示当前整数速度，点击后打开快捷面板；支持步进按钮、滑杆、常用档位、滚轮和方向键调速。
@@ -1269,6 +1372,8 @@ normalizedWheelDelta(deltaY, deltaMode, fineStep, viewportHeight)
 - 拖动判定有 4px 位移阈值；按钮、输入框、下拉框、链接、滚动控件和听书控件不会触发拖动。
 - 正文形成文字选区后优先保留文本选择，不把同一次操作升级为窗口拖动。
 - 浮框顶部右侧提供独立的最小化和关闭按钮：最小化仅收起浮窗并保留阅读实例，可从任务栏恢复；关闭退出整个 Readex。两者都与“返回主界面”按钮职责分离。
+- 浮框提供“隐身模式”（设置开关与右上角眼睛按钮等效）：去掉卡片边框、圆角，窗口阴影关闭并通过 `setAccentColor(false)` 隐藏 Windows 系统边框线；窗口四边叠加由背景色到透明的淡化渐变，正文靠近边缘柔和隐没。外壳边距与内容区同为纯背景色但仍可拖动窗口；右上角隐身开关以低透明度常驻，最小化/关闭按钮和右侧滚动控制组平时隐藏、悬停后浮现，保证随时可退出隐身。
+- 隐身状态存于 `ReaderSettings.floatingReaderStealth`，重启浮框后保持；进入隐身时通过 `window:set-floating-reader-shadow` 同步关闭窗口阴影并隐藏系统边框。
 - 浮框右侧提供向上、向下、自动滚动、速度调节、听书和返回主界面按钮。
 - 浮框内滚动控制组按内容自适应高度，并始终以阅读区垂直中线居中。
 - 返回主界面时只隐藏浮窗并保留其渲染实例；同一本书再次进入浮框时直接复用，并同步主界面最新阅读位置和设置。
@@ -1299,6 +1404,14 @@ normalizedWheelDelta(deltaY, deltaMode, fineStep, viewportHeight)
 ```text
 备份 ZIP/personal/...
 ```
+
+恢复使用已有的 JSZip（不新增依赖）：
+
+1. 选择 ZIP，限制为 2 GB 以内，并校验存在 `personal/library.json`。
+2. 逐条解压到 `cache/restore-<uuid>/personal`，拒绝 `..` 等目录穿越路径。
+3. 解压全部成功后，把当前 `personal` 重命名为 `cache/personal-previous-<timestamp>`。
+4. 把临时目录重命名为 `personal`；任何一步失败都还原旧目录并清理临时文件。
+5. 成功后删除旧目录、清空进度节流缓存、使注解索引失效，并重新初始化存储。
 
 ### 20.3 清空
 
@@ -1462,9 +1575,9 @@ pnpm build
 ### 23.2 输出
 
 ```text
-release/Readex-0.1.0-x64.zip
-release/Readex-0.1.0-portable.exe
-release/Readex-0.1.0-green-share.zip
+release/Readex-0.2.0-x64.zip
+release/Readex-0.2.0-portable.exe
+release/Readex-0.2.0-green-share.zip
 release/win-unpacked/Readex.exe
 ```
 
@@ -1531,15 +1644,20 @@ Windows 使用 `build/readex.ico`：
 
 | 测试文件 | 覆盖内容 |
 | --- | --- |
-| bookProtocol.test.ts | `readex://` 图书协议、路径隔离和 HTTP Range |
-| content.test.ts | TXT 分章、GB18030 解码 |
-| importer.test.ts | 支持格式文件头、二进制拒绝、标题清洗和 PDF 元数据 |
-| speech.test.ts（main） | 听书参数转换、时间戳解析和异常回退 |
-| storage.test.ts | 阅读设置迁移、浮框默认尺寸和显式尺寸保留 |
+| `fulltext.test.ts` | 跨书正文搜索的 TXT/EPUB 定位与单本结果上限 |
+| `stats.test.ts` | 最近 7 天、本月/今年汇总、连续天数和时长格式化 |
+| bookProtocol.test.ts | `readex://` 图书、封面和漫画协议、路径隔离与 HTTP Range |
+| content.test.ts | TXT 分章、标题目录、GB18030 解码 |
+| importer.test.ts | 支持格式文件头、CBZ 头校验、二进制拒绝、标题清洗和 PDF 元数据 |
+| speech.test.ts（main） | 听书参数转换、时间戳解析、系统音色选择和异常回退 |
+| storage.test.ts | 阅读设置迁移、浮框默认尺寸、阅读布局与目标迁移、听书引擎迁移、封面 data URL 迁移 |
 | autoScroll.test.ts | 自动滚动速度映射、中文句子切分和连续推进 |
 | embeddedFonts.test.ts | EPUB 字体样式优先通过 adoptedStyleSheets 注入，避免 XHTML 显示 CSS 文本 |
 | floatingDrag.test.ts | 浮框空白区拖动、控件排除、位移阈值和文本选择优先 |
-| notes.test.ts | Markdown 导出、书签标签 |
+| notes.test.ts | Markdown 导出、书签标签、笔记编辑历史 |
+| bookTags.test.ts | 标签去空、去重、截断和数量上限 |
+| comicPages.test.ts | 漫画页码钳制与双页起始页对齐 |
+| comic.test.ts | CBZ 图片过滤、元数据文件和自然排序 |
 | pdfLayout.test.ts | PDF 适应宽度、相对缩放倍率和未就绪页面的安全回退 |
 | selectionContextMenu.test.ts | 文本菜单四向边界翻转和视口内约束 |
 | smoothScroll.test.ts | 标准滚轮、触控板、行模式换算 |
@@ -1550,8 +1668,8 @@ Windows 使用 `build/readex.ico`：
 当前测试规模：
 
 ```text
-15 个测试文件
-57 个测试用例
+20 个测试文件
+92 个测试用例
 ```
 
 ### 24.2 手工和自动化桌面验证
@@ -1599,9 +1717,7 @@ Windows 使用 `build/readex.ico`：
 
 ### 25.5 封面存储
 
-当前封面以 Data URL 保存在书库 JSON 中。大量书籍后可能增大 `library.json`。
-
-建议后续把封面保存为 `cover.<ext>` 文件，只在书库中存相对路径。
+封面已从 `library.json` 中移出，保存为 `personal/books/<bookId>/cover.<ext>`，书库只存 `coverFile` 文件名。旧版本的 `coverDataUrl` 在应用启动时由 `migrateCoverFiles()` 写入文件并从 JSON 删除；迁移失败时保留 data URL，下次启动重试。渲染层通过 `readex://cover/<bookId>` 按需读取文件，URL 带 `updatedAt` 版本避免缓存旧图。
 
 ### 25.6 注解存储
 
@@ -1609,11 +1725,15 @@ Windows 使用 `build/readex.ico`：
 
 ### 25.7 全局搜索
 
-当前全局只搜索笔记，不搜索所有正文。
+全局正文搜索覆盖 EPUB、TXT、MOBI 和 AZW3；PDF 需要逐页提取文本，暂不进入全局索引，只能在书内搜索。EPUB 首次搜索时提取 spine 文本并缓存到 `cache/parsed/<bookId>/fulltext.json`，TXT/MOBI 复用内容缓存。每本最多 30 条、总计最多 200 条结果。
 
 ### 25.8 安全加固
 
 主窗口和浮框均已开启 `sandbox`、`contextIsolation`，并关闭 `nodeIntegration`。preload 使用 sandbox 兼容的 CommonJS 构建；后续仍需在 Electron 升级时复查 sandbox 限制和自定义协议行为。
+
+### 25.9 CBZ 漫画
+
+CBZ 只有图片，没有文本层，因此不支持高亮、笔记、搜索和听书。首次打开会解压图片到 `cache/parsed`，占用空间约等于压缩包大小；删除缓存后可重建。单页超过 20 MB 或总页数超过 3000 页会被拒绝。
 
 ---
 
@@ -1621,12 +1741,7 @@ Windows 使用 `build/readex.ico`：
 
 ### 26.1 近期
 
-- 封面文件化，减小 `library.json`
-- 增加真正的书签面板和按章节分组
-- 为笔记增加编辑状态和历史
 - 增加阅读页缩略图
-- 增加最近阅读和排序
-- 增加批量导入取消按钮
 - 增加 EPUB CFI 精确右键范围定位
 
 ### 26.2 中期
@@ -1634,18 +1749,16 @@ Windows 使用 `build/readex.ico`：
 - 使用 SQLite 管理书库、注解和搜索
 - 建立跨书全文索引
 - 增加书签标签、笔记标签
-- 增加双页阅读
 - 增加 PDF 目录解析
 - 增加 AZW3 明确支持
-- 增加 FB2、CBZ/CBR
-- 增加系统离线朗读
+- 增加 FB2、CBR
 
 ### 26.3 长期
 
 - 加密个人资料备份
 - 云同步可选插件
 - 多端同步冲突解决
-- 阅读统计
+- 阅读目标、年度报告等统计扩展
 - 跨书知识卡片
 - 插件系统
 

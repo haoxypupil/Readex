@@ -55,7 +55,19 @@ export function createRangeByOffsets(root: HTMLElement, start: number, end: numb
   return range
 }
 
-export function applyTextHighlights(root: HTMLElement, annotations: Annotation[]): void {
+export interface HighlightChapter {
+  id: string
+  root: HTMLElement
+}
+
+/**
+ * 高亮注册表是按颜色共享的全局表，必须把所有章节的 range 收集完再一次性写入；
+ * 逐章写入会让后一章覆盖前一章，导致长 TXT/MOBI 只显示最后一章的高亮。
+ */
+export function applyTextHighlights(
+  chapters: ReadonlyArray<HighlightChapter>,
+  annotations: Annotation[]
+): void {
   const registry = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS
   if (!registry?.highlights || typeof globalThis.Highlight === 'undefined') return
 
@@ -64,11 +76,18 @@ export function applyTextHighlights(root: HTMLElement, annotations: Annotation[]
     const start = annotation.locator.start
     const end = annotation.locator.end
     if (start === undefined || end === undefined) continue
-    const range = createRangeByOffsets(root, start, end)
-    if (!range) continue
-    const ranges = rangesByColor.get(annotation.color) ?? []
-    ranges.push(range)
-    rangesByColor.set(annotation.color, ranges)
+    const chapterId = annotation.locator.chapterId
+    const candidates = chapterId
+      ? chapters.filter((chapter) => chapter.id === chapterId)
+      : chapters
+    for (const chapter of candidates) {
+      const range = createRangeByOffsets(chapter.root, start, end)
+      if (!range) continue
+      const ranges = rangesByColor.get(annotation.color) ?? []
+      ranges.push(range)
+      rangesByColor.set(annotation.color, ranges)
+      break
+    }
   }
 
   for (const color of ['yellow', 'green', 'blue', 'pink'] as const) {
@@ -79,14 +98,11 @@ export function applyTextHighlights(root: HTMLElement, annotations: Annotation[]
   }
 }
 
-export function clearTextHighlights(root: HTMLElement, annotations: Annotation[]): void {
+export function clearTextHighlights(): void {
   const registry = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } }).CSS
   if (!registry?.highlights) return
-  for (const color of ['yellow', 'green', 'blue', 'pink']) {
+  for (const color of ['yellow', 'green', 'blue', 'pink'] as const) {
     registry.highlights.delete(`rdx-${color}`)
-  }
-  for (const key of Object.keys(root.dataset)) {
-    if (key.startsWith('highlight')) delete root.dataset[key]
   }
 }
 

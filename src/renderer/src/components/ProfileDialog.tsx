@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   Archive,
+  ArchiveRestore,
   Copy,
   Database,
+  Eraser,
   FolderOpen,
   HardDrive,
   ShieldAlert,
@@ -21,8 +23,9 @@ interface ProfileDialogProps {
 export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React.JSX.Element {
   const dialogRef = useDialogFocus<HTMLElement>(onClose)
   const [info, setInfo] = useState<ProfileInfo | null>(null)
-  const [busy, setBusy] = useState<'backup' | 'clear' | null>(null)
+  const [busy, setBusy] = useState<'backup' | 'restore' | 'clear' | 'tts' | null>(null)
   const [confirmClear, setConfirmClear] = useState(false)
+  const [confirmRestore, setConfirmRestore] = useState(false)
   const [message, setMessage] = useState('')
 
   const load = (): void => {
@@ -50,6 +53,29 @@ export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React
     setConfirmClear(false)
     setMessage('个人资料已清空。缓存和原始书籍文件没有被修改。')
     onChanged()
+    load()
+  }
+
+  const restore = async (): Promise<void> => {
+    setBusy('restore')
+    setMessage('')
+    const result = await window.readex.profile.restore()
+    setBusy(null)
+    setConfirmRestore(false)
+    if (result.restored) {
+      // 备份替换了书库与设置，整页重载以重新读取个人资料。
+      window.location.reload()
+      return
+    }
+    if (result.message) setMessage(result.message)
+  }
+
+  const clearTts = async (): Promise<void> => {
+    setBusy('tts')
+    setMessage('')
+    const result = await window.readex.profile.clearTtsCache()
+    setBusy(null)
+    setMessage(`听书缓存已清空，释放 ${formatBytes(result.freedBytes)}`)
     load()
   }
 
@@ -95,6 +121,13 @@ export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React
               个人数据
             </span>
           </div>
+          <div>
+            <Eraser size={18} />
+            <span>
+              <strong>{formatBytes(info?.cacheBytes ?? 0)}</strong>
+              解析与听书缓存
+            </span>
+          </div>
         </div>
 
         <div className="path-card">
@@ -130,6 +163,18 @@ export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React
           <p>这是可重建的解析缓存，不属于个人资料，可以安全删除。</p>
         </div>
 
+        <div className="profile-actions cache-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy !== null}
+            onClick={() => void clearTts()}
+          >
+            <Eraser size={15} />
+            {busy === 'tts' ? '正在清理…' : '清空听书缓存'}
+          </button>
+        </div>
+
         {confirmClear ? (
           <div className="danger-zone">
             <ShieldAlert size={21} />
@@ -161,6 +206,43 @@ export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React
               </div>
             </div>
           </div>
+        ) : confirmRestore ? (
+          <div className="danger-zone">
+            <ShieldAlert size={21} />
+            <div>
+              <h3>从备份恢复个人资料？</h3>
+              <p>
+                恢复会用备份中的 personal 覆盖当前书库、阅读进度、设置和笔记。建议先备份当前数据。
+              </p>
+              <div className="danger-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void backup()}
+                >
+                  <Archive size={15} />
+                  先备份当前数据
+                </button>
+                <button
+                  className="danger-button"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void restore()}
+                >
+                  <ArchiveRestore size={15} />
+                  {busy === 'restore' ? '正在恢复…' : '选择备份并恢复'}
+                </button>
+                <button
+                  className="text-button"
+                  type="button"
+                  onClick={() => setConfirmRestore(false)}
+                >
+                  取消
+                </button>
+              </div>
+            </div>
+          </div>
         ) : (
           <div className="profile-actions">
             <button
@@ -171,6 +253,15 @@ export function ProfileDialog({ onClose, onChanged }: ProfileDialogProps): React
             >
               <Archive size={16} />
               {busy === 'backup' ? '正在备份…' : '备份个人资料'}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy !== null}
+              onClick={() => setConfirmRestore(true)}
+            >
+              <ArchiveRestore size={16} />
+              从备份恢复
             </button>
             <button
               className="danger-outline-button"

@@ -1,19 +1,31 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import JSZip from 'jszip'
 import type {
   BookContent,
+  BookFormat,
   BookRecord,
+  ComicPage,
   NormalizedChapter,
   SearchResult,
   TocItem
 } from '../shared/types'
+import { isComicImagePath, sortComicImages } from './comic'
 import { ReadexStorage, readJson, writeJsonAtomic } from './storage'
 import { decodeTextBuffer } from './text'
+
+/** AZW3 是 KF8 容器，内容解析与定位复用 MOBI 管线，内容缓存也以 mobi 语义存储。 */
+function contentFormatFor(book: BookRecord): BookFormat {
+  return book.format === 'azw3' ? 'mobi' : book.format
+}
 
 export async function getBookContent(
   storage: ReadexStorage,
   book: BookRecord
 ): Promise<BookContent | null> {
+  if (book.format === 'cbz') {
+    return getComicContent(storage, book)
+  }
   if (book.format === 'epub' || book.format === 'pdf') {
     return {
       format: book.format,
@@ -21,15 +33,16 @@ export async function getBookContent(
     }
   }
 
+  const contentFormat = contentFormatFor(book)
   const cachePath = path.join(storage.getPaths().parseCache, book.id, 'content.json')
   const cached = await readJson<BookContent | null>(cachePath, null)
-  if (cached && cached.format === book.format) {
+  if (cached && cached.format === contentFormat) {
     return cached
   }
 
   const sourcePath = storage.getBookSourcePath(book)
   const content =
-    book.format === 'mobi'
+    contentFormat === 'mobi'
       ? await parseMobiContent(sourcePath, path.join(storage.getPaths().parseCache, book.id, 'resources'))
       : await parseTxtContent(sourcePath)
 
@@ -45,7 +58,7 @@ export async function searchBookContent(
   const normalized = query.trim().toLocaleLowerCase()
   if (normalized.length < 1) return []
 
-  if (book.format === 'epub' || book.format === 'pdf') return []
+  if (book.format === 'epub' || book.format === 'pdf' || book.format === 'cbz') return []
   const content = await getBookContent(storage, book)
   if (!content) return []
 
@@ -78,6 +91,63 @@ export async function searchBookContent(
   }
 
   return results
+}
+
+async function getComicContent(
+  storage: ReadexStorage,
+  book: BookRecord
+): Promise<BookContent> {
+  const directory = path.join(storage.getPaths().parseCache, book.id)
+  const contentPath = path.join(directory, 'content.json')
+  const pagesDirectory = path.join(directory, 'pages')
+  const cached = await readJson<BookContent | null>(contentPath, null)
+  if (cached?.format === 'cbz' && cached.pages?.length) {
+    const pagesStat = await fs.stat(pagesDirectory).catch(() => null)
+    if (pagesStat?.isDirectory()) return cached
+  }
+
+  const archive = await JSZip.loadAsync(await fs.readFile(storage.getBookSourcePath(book)))
+  const entries = sortComicImages(
+    Object.values(archive.files).filter((entry) => !entry.dir && isComicImagePath(entry.name))
+  )
+  if (!entries.length) throw new Error('CBZ 中未找到可显示的图片')
+  if (entries.length > 3000) throw new Error('CBZ 页数超过 3000 页，暂不支持')
+
+  await fs.rm(pagesDirectory, { recursive: true, force: true })
+  await fs.mkdir(pagesDirectory, { recursive: true })
+  const pages: ComicPage[] = []
+  let totalBytes = 0
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    const data = await entry.async('nodebuffer')
+    if (data.byteLength > 20 * 1024 * 1024) {
+      throw new Error(`第 ${index + 1} 页图片超过 20 MB`)
+    }
+    totalBytes += data.byteLength
+    if (totalBytes > 4 * 1024 * 1024 * 1024) {
+      throw new Error('CBZ 解压后体积超过 4 GB，暂不支持')
+    }
+    const extension = path.posix.extname(entry.name).toLowerCase() || '.jpg'
+    const fileName = `${String(index + 1).padStart(4, '0')}${extension}`
+    await fs.writeFile(path.join(pagesDirectory, fileName), data)
+    pages.push({
+      index,
+      fileName,
+      mime: mimeForPath(entry.name)
+    })
+  }
+
+  const content: BookContent = {
+    format: 'cbz',
+    toc: pages.map((page) => ({
+      id: `comic-page-${page.index + 1}`,
+      label: `第 ${page.index + 1} 页`,
+      chapterId: String(page.index + 1)
+    })),
+    pages
+  }
+  await writeJsonAtomic(contentPath, content)
+  return content
 }
 
 async function parseMobiContent(sourcePath: string, resourceDirectory: string): Promise<BookContent> {
@@ -144,12 +214,76 @@ export async function parseTxtContent(sourcePath: string): Promise<BookContent> 
   const chapters = splitTxtIntoChapters(text)
   return {
     format: 'txt',
-    toc: chapters.map((chapter) => ({
-      id: chapter.id,
-      label: chapter.label
-    })),
+    toc: buildTxtToc(text, chapters),
     chapters
   }
+}
+
+interface TxtHeading {
+  offset: number
+  label: string
+}
+
+const TXT_HEADING_PATTERNS = [
+  // 第X章 / 第X回 / 第X卷，标题行必须独占一行且不能是长段落。
+  /^[ \t　]{0,3}(第[0-9０-９零〇一二三四五六七八九十百千万两]{1,12}[章节回卷部篇集][^\n]{0,30})[ \t　]*$/gm,
+  // 序章、楔子、番外等结构标题；后面只能是行尾或分隔符，避免把“前言正文。”当成标题。
+  /^[ \t　]{0,3}((?:序章|序言|楔子|前言|引子|后记|尾声|番外篇?)(?:[ \t　：:·—\-][^\n]{0,30})?)[ \t　]*$/gm,
+  // 英文 Chapter / Part / Book 标题。
+  /^[ \t]{0,3}((?:chapter|part|book)\s+(?:[0-9]+|[ivxlcdm]+)\b[^\n]{0,40})[ \t]*$/gim
+]
+
+/**
+ * TXT 仍按固定字符块分章以保持阅读性能和既有笔记定位，
+ * 但目录优先展示识别出的真实标题，并记录章内偏移用于跳转。
+ */
+export function buildTxtToc(text: string, chapters: NormalizedChapter[]): TocItem[] {
+  const headings = findTxtHeadings(text)
+  if (headings.length < 2) {
+    return chapters.map((chapter) => ({ id: chapter.id, label: chapter.label }))
+  }
+
+  const ranges: Array<{ id: string; start: number; end: number }> = []
+  let cursor = 0
+  for (const chapter of chapters) {
+    ranges.push({ id: chapter.id, start: cursor, end: cursor + chapter.text.length })
+    cursor += chapter.text.length
+  }
+  if (!ranges.length) return []
+
+  const toc: TocItem[] = []
+  if (headings[0].offset > 3000) {
+    toc.push({ id: 'txt-preamble', label: '开头', chapterId: ranges[0].id, start: 0 })
+  }
+  for (const heading of headings) {
+    const range =
+      ranges.find((item) => heading.offset >= item.start && heading.offset < item.end) ??
+      ranges[ranges.length - 1]
+    toc.push({
+      id: `txt-heading-${heading.offset}`,
+      label: heading.label,
+      chapterId: range.id,
+      start: Math.max(0, heading.offset - range.start)
+    })
+  }
+  return toc
+}
+
+function findTxtHeadings(text: string): TxtHeading[] {
+  const found = new Map<number, string>()
+  for (const pattern of TXT_HEADING_PATTERNS) {
+    pattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(text))) {
+      const label = match[1].replace(/\s+/g, ' ').trim().slice(0, 60)
+      // 以句末标点结尾的多半是正文句子而不是章节标题。
+      if (!label || /[。．.!?！？；;]$/.test(label)) continue
+      if (!found.has(match.index)) found.set(match.index, label)
+    }
+  }
+  return [...found.entries()]
+    .map(([offset, label]) => ({ offset, label }))
+    .sort((a, b) => a.offset - b.offset)
 }
 
 function splitTxtIntoChapters(text: string): NormalizedChapter[] {
@@ -204,7 +338,7 @@ function mapMobiToc(
   })
 }
 
-function htmlToText(html: string): string {
+export function htmlToText(html: string): string {
   return html
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -237,7 +371,8 @@ function mimeForPath(filePath: string): string {
       '.gif': 'image/gif',
       '.webp': 'image/webp',
       '.svg': 'image/svg+xml',
-      '.bmp': 'image/bmp'
+      '.bmp': 'image/bmp',
+      '.avif': 'image/avif'
     }[extension] ?? 'application/octet-stream'
   )
 }

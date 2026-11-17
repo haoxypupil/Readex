@@ -21,8 +21,15 @@ import type { AutoScrollStatus } from './types'
 import { ReaderError, ReaderLoading } from './TextFlowReader'
 import { normalizedWheelDelta, smoothScrollBy } from '../lib/smoothScroll'
 import { AutoScrollController } from '../lib/autoScroll'
+import {
+  buildSpeechSnapshot,
+  removeSpeechHighlight,
+  scrollRangeToReadingPosition,
+  setSpeechHighlight
+} from '../lib/speech'
 import { isLightColor } from '../lib/theme'
 import { calculatePdfDisplayScale } from '../lib/pdfLayout'
+import { findTextRange } from '../lib/textRange'
 
 GlobalWorkerOptions.workerSrc = workerUrl
 const PDF_PAGE_HORIZONTAL_GUTTER = 48
@@ -47,11 +54,14 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   const pageRefs = useRef(new Map<number, HTMLElement>())
   const [pageCount, setPageCount] = useState(0)
   const [availableWidth, setAvailableWidth] = useState(0)
+  const [spreadActive, setSpreadActive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const settingsRef = useRef(settings)
   const autoScrollControllerRef = useRef<AutoScrollController | null>(null)
   const autoScrollEndHandler = useRef<(() => void) | null>(null)
+  const speechSegments = useRef(new Map<string, Range>())
+  const searchHighlightToken = useRef(0)
 
   useEffect(() => {
     autoScrollEndHandler.current = onAutoScrollEnd ?? null
@@ -65,13 +75,22 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     const root = scrollRef.current
     if (!root) return
     const updateWidth = (): void => {
-      setAvailableWidth(Math.max(280, root.clientWidth - PDF_PAGE_HORIZONTAL_GUTTER))
+      const spread = settings.pdfTwoPage && root.clientWidth >= 760
+      setSpreadActive(spread)
+      const columns = spread ? 2 : 1
+      const gap = spread ? 22 : 0
+      setAvailableWidth(
+        Math.max(
+          240,
+          Math.floor((root.clientWidth - PDF_PAGE_HORIZONTAL_GUTTER - gap) / columns)
+        )
+      )
     }
     updateWidth()
     const observer = new ResizeObserver(updateWidth)
     observer.observe(root)
     return () => observer.disconnect()
-  }, [])
+  }, [settings.pdfTwoPage])
 
   useEffect(() => {
     let active = true
@@ -92,6 +111,18 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
             chapterId: String(index + 1)
           }))
         )
+        if (!book.coverFile && !book.coverDataUrl) {
+          void generatePdfCover(pdf).then((dataUrl) => {
+            if (!active || !dataUrl) return
+            void window.readex.library
+              .saveGeneratedCover(book.id, dataUrl)
+              .then((saved) => {
+                if (saved) {
+                  window.dispatchEvent(new CustomEvent('readex:library-updated'))
+                }
+              })
+          })
+        }
         const state = await window.readex.reading.getState(book.id)
         if (state?.locator?.page) {
           const pageNumber = state.locator.page
@@ -299,6 +330,114 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     autoScrollControllerRef.current?.stop()
   }
 
+  const closestPageNumber = (): number => {
+    const root = scrollRef.current
+    if (!root) return 1
+    const rootRect = root.getBoundingClientRect()
+    let closest = 1
+    let distance = Number.POSITIVE_INFINITY
+    for (const [page, element] of pageRefs.current) {
+      const nextDistance = Math.abs(element.getBoundingClientRect().top - rootRect.top)
+      if (nextDistance < distance) {
+        distance = nextDistance
+        closest = page
+      }
+    }
+    return closest
+  }
+
+  const getSpeechSnapshot = (): ReturnType<ReaderHandle['getSpeechSnapshot']> => {
+    const root = scrollRef.current
+    if (!root) return null
+    const rootRect = root.getBoundingClientRect()
+    // 只收集当前页附近已渲染的文本层，避免长文档遍历所有页面。
+    const current = closestPageNumber()
+    const roots = [...pageRefs.current.entries()].flatMap(([page, pageElement]) => {
+      if (page < current - 1 || page > current + 2) return []
+      const textLayer = pageElement.querySelector('.pdf-text-layer') as HTMLElement | null
+      if (!textLayer?.textContent?.trim()) return []
+      return [
+        {
+          id: `pdf-${page}`,
+          element: textLayer,
+          mapY: (viewportY: number): number =>
+            viewportY - rootRect.top + root.scrollTop
+        }
+      ]
+    })
+    const snapshot = buildSpeechSnapshot(roots, root.scrollTop)
+    speechSegments.current = new Map(
+      snapshot?.segments.map((segment) => [segment.id, segment.range]) ?? []
+    )
+    return snapshot
+  }
+
+  const scrollToSpeechSegment = (segmentId: string): void => {
+    const container = scrollRef.current
+    const range = speechSegments.current.get(segmentId)
+    if (!container || !range) return
+    scrollRangeToReadingPosition(range, container, settingsRef.current.smoothScrolling)
+  }
+
+  const setSpeechSegmentHighlight = (segmentId: string | null): void => {
+    const range = segmentId ? speechSegments.current.get(segmentId) : null
+    setSpeechHighlight(range ?? null, settingsRef.current.autoScrollColor)
+  }
+
+  const advanceSpeechSection = async (): Promise<boolean> => {
+    if (!pageCount) return false
+    const current = closestPageNumber()
+    for (let offset = 1; offset <= 3; offset += 1) {
+      const element = pageRefs.current.get(current + offset)
+      if (!element) break
+      element.scrollIntoView({ block: 'start' })
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 250))
+        const layer = element.querySelector('.pdf-text-layer')
+        if (layer?.textContent?.trim()) return true
+      }
+    }
+    return false
+  }
+
+  const setSearchHighlight = (result: SearchResult | null): void => {
+    const token = ++searchHighlightToken.current
+    const registry = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } })
+      .CSS
+    registry?.highlights?.delete('rdx-search')
+    const pageNumber = result?.locator?.page
+    const needle = result?.locator?.excerpt?.trim()
+    if (!pageNumber || !needle) return
+
+    const attemptHighlight = (attempt: number): void => {
+      if (token !== searchHighlightToken.current) return
+      const pageElement = pageRefs.current.get(pageNumber)
+      const layer = pageElement?.querySelector('.pdf-text-layer') as HTMLElement | null
+      const range = layer ? findTextRange(layer, needle) : null
+      if (range) {
+        if (registry?.highlights && typeof globalThis.Highlight !== 'undefined') {
+          registry.highlights.set('rdx-search', new Highlight(range))
+        }
+        return
+      }
+      if (attempt < 5) {
+        window.setTimeout(() => attemptHighlight(attempt + 1), 250)
+      }
+    }
+    attemptHighlight(0)
+  }
+
+  useEffect(() => removeSpeechHighlight, [book.id])
+
+  useEffect(() => {
+    return () => {
+      searchHighlightToken.current += 1
+      const registry = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } })
+        .CSS
+      registry?.highlights?.delete('rdx-search')
+    }
+  }, [book.id])
+
   useEffect(() => {
     return () => stopAutoScroll()
   }, [book.id])
@@ -309,14 +448,19 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
     search,
     startAutoScroll,
     stopAutoScroll,
-    getSpeechSnapshot: () => null,
-    scrollToSpeechSegment: () => undefined,
-    setSpeechSegmentHighlight: () => undefined,
-    advanceSpeechSection: async () => false
+    getSpeechSnapshot,
+    scrollToSpeechSegment,
+    setSpeechSegmentHighlight,
+    advanceSpeechSection,
+    setSearchHighlight
   }))
 
   return (
-    <div className={`pdf-reader theme-${settings.theme}`} ref={scrollRef} onScroll={reportProgress}>
+    <div
+      className={`pdf-reader theme-${settings.theme} ${settings.pdfNightMode ? 'pdf-night' : ''} ${spreadActive ? 'pdf-spread' : ''}`}
+      ref={scrollRef}
+      onScroll={reportProgress}
+    >
       {loading && <ReaderLoading label="正在渲染 PDF" />}
       {error && <ReaderError message={error} />}
       <div className="pdf-pages">
@@ -341,8 +485,23 @@ export const PdfReader = forwardRef<ReaderHandle, ReaderProps>(function PdfReade
   )
 })
 
-function PdfPage({
-  pdf,
+async function generatePdfCover(pdf: PDFDocumentProxy): Promise<string | null> {
+  try {
+    const page = await pdf.getPage(1)
+    const viewport = page.getViewport({ scale: 0.35 })
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.max(1, Math.round(viewport.width))
+    canvas.height = Math.max(1, Math.round(viewport.height))
+    const context = canvas.getContext('2d')
+    if (!context) return null
+    await page.render({ canvasContext: context, viewport }).promise
+    return canvas.toDataURL('image/jpeg', 0.82)
+  } catch {
+    return null
+  }
+}
+
+function PdfPage({  pdf,
   pageNumber,
   availableWidth,
   zoom,

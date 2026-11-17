@@ -6,17 +6,18 @@
 
 当前范围：
 
-- 支持 TXT、MOBI/KF8 和 EPUB。
-- 从阅读区当前视口的第一句完整文字开始。
+- 支持 TXT、MOBI/KF8、EPUB 和文本型 PDF。
+- 从阅读区当前视口的第一句完整文字开始；存在选中文字时从选中位置开始。
 - 支持播放、暂停、继续和停止。
+- 支持 15、30、60 分钟定时停止。
 - 支持中文音色、语速和音量。
+- 支持在线神经语音和 Windows 系统离线语音两种引擎，可在听书设置中切换。
 - 当前句高亮，读完自动推进并滚动到下一句。
-- 合成结果缓存到便携目录，重复朗读不重复请求。
+- 在线合成结果缓存到便携目录，重复朗读不重复请求。
 - 浮框内提供紧凑听书控件，可独立播放；进入浮框会先停止主窗口听书，返回主界面会停止浮窗听书。
 
 当前不包含：
 
-- PDF 听书。PDF 阅读器已实现统一接口并返回“不支持”，后续可基于 PDF 文本层接入。
 - 扫描版 PDF OCR。
 - 逐字高亮。服务返回的是词或词组边界，第一版采用稳定的整句高亮。
 
@@ -49,6 +50,17 @@
 - 正在朗读的句子会发送给微软在线语音服务。
 - 接口不是微软公开支持的稳定 API，可能间歇性出现 `403`、`429`、`503` 或超时。
 - 当前实现不改变这一事实，只通过缓存、重试、串行队列和错误提示降低影响。
+
+### 2.1 系统离线语音
+
+在线语音之外，设置中可选择 Windows 系统离线语音：
+
+- 使用渲染进程的 Web Speech API（`speechSynthesis` + `SpeechSynthesisUtterance`），由 Chromium 调用系统语音包。
+- 不请求网络，也不写入 `data/cache/tts`。
+- 音色优先使用用户选择的系统语音名称；未选择时依次回退到中文语音和第一个可用语音。
+- 仍沿用现有的句子切分、逐句播放、当前句高亮、滚动、跨章节推进和定时停止逻辑。
+- 暂停、继续和停止分别映射到 `speechSynthesis.pause()`、`resume()` 和 `cancel()`。
+- 可用音色取决于 Windows 已安装的语音包；系统未安装中文语音时会使用默认语音。
 
 ## 3. 总体架构
 
@@ -94,11 +106,11 @@ node-edge-tts -> Microsoft Edge online TTS
 | `src/main/storage.ts` | `data/cache/tts` 路径和设置迁移 |
 | `src/main/index.ts` | `speech:synthesize` IPC |
 | `src/preload/index.ts` | 受限听书 API |
-| `src/renderer/src/lib/speech.ts` | 句子定位、高亮和播放控制器 |
+| `src/renderer/src/lib/speech.ts` | 句子定位、高亮、在线音频与系统离线语音播放控制器 |
 | `src/renderer/src/readers/types.ts` | 阅读器统一听书接口 |
 | `src/renderer/src/readers/TextFlowReader.tsx` | TXT/MOBI 句段、滚动和高亮 |
 | `src/renderer/src/readers/EpubReader.tsx` | EPUB iframe 句段和跨章节推进 |
-| `src/renderer/src/readers/PdfReader.tsx` | PDF 能力占位 |
+| `src/renderer/src/readers/PdfReader.tsx` | PDF 文本层句段、滚动、高亮和跨页推进 |
 | `src/renderer/src/components/ReaderScrollControls.tsx` | 右侧听书按钮和设置面板 |
 | `src/renderer/src/components/ReaderView.tsx` | 听书控制器生命周期和互斥 |
 

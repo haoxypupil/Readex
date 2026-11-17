@@ -19,17 +19,33 @@ describe('automatic scrolling', () => {
     const speeds = Array.from({ length: 100 }, (_, index) =>
       autoScrollPixelsPerSecond(index + 1)
     )
-    expect(speeds[0]).toBe(14)
-    expect(speeds[99]).toBeCloseTo(120)
-    expect(autoScrollPixelsPerSecond(99)).toBeLessThan(120)
+    expect(speeds[0]).toBe(4)
+    expect(speeds[19]).toBeCloseTo(20, 6)
+    expect(speeds[99]).toBeCloseTo(120, 6)
     expect(speeds.every((speed, index) => index === 0 || speed > speeds[index - 1])).toBe(
       true
     )
+    // 低速段刻意拉开每级差异（约 8.8%）；高速段保持平缓（<4%）。
     expect(Math.max(...speeds.slice(1).map((speed, index) => speed / speeds[index]))).toBeLessThan(
-      1.04
+      1.09
     )
+    expect(
+      Math.max(...speeds.slice(20).map((speed, index) => speed / speeds[index + 19]))
+    ).toBeLessThan(1.04)
     expect(autoScrollPixelsPerSecond(25)).toBeGreaterThan(speeds[23])
     expect(autoScrollPixelsPerSecond(25)).toBeLessThan(speeds[25])
+  })
+
+  it('spreads low speed levels so each step feels distinctly slower', () => {
+    // 低速段（1-20 级）相邻档位至少差 8%，否则调不出体感差异。
+    const lowSpeeds = Array.from({ length: 19 }, (_, index) =>
+      autoScrollPixelsPerSecond(index + 1)
+    )
+    expect(
+      Math.min(...lowSpeeds.slice(1).map((speed, index) => speed / lowSpeeds[index]))
+    ).toBeGreaterThan(1.08)
+    // 15 级时应明显低于旧曲线的约 19 px/s。
+    expect(autoScrollPixelsPerSecond(15)).toBeLessThan(14)
   })
 
   it('normalizes and adjusts speed as integer levels from 1 to 100', () => {

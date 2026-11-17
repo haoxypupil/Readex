@@ -5,6 +5,7 @@ import {
   speechRatePercent,
   speechVolumePercent
 } from '../../src/main/speech'
+import { selectSystemVoice } from '../../src/shared/speech'
 
 describe('speech synthesis parameters', () => {
   it('normalizes whitespace and converts rate to Edge TTS percentages', () => {
@@ -41,5 +42,29 @@ describe('speech cue parsing', () => {
 
   it('returns an empty list for invalid JSON', () => {
     expect(parseSpeechCues('{broken')).toEqual([])
+  })
+})
+
+describe('system voice selection', () => {
+  const voices = [
+    { name: 'English', lang: 'en-US' },
+    { name: 'Huihui', lang: 'zh-CN' },
+    { name: 'Kangkang', lang: 'zh-TW' }
+  ]
+
+  it('prefers the configured system voice', () => {
+    expect(selectSystemVoice(voices, 'Kangkang')).toEqual({
+      name: 'Kangkang',
+      lang: 'zh-TW'
+    })
+  })
+
+  it('falls back to a Chinese voice and then the first available voice', () => {
+    expect(selectSystemVoice(voices)).toEqual({ name: 'Huihui', lang: 'zh-CN' })
+    expect(selectSystemVoice([{ name: 'English', lang: 'en-US' }])).toEqual({
+      name: 'English',
+      lang: 'en-US'
+    })
+    expect(selectSystemVoice([])).toBeNull()
   })
 })

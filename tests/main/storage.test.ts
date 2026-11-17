@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { migrateReaderSettings } from '../../src/main/storage'
+import { migrateReaderSettings, parseCoverDataUrl } from '../../src/main/storage'
 import { DEFAULT_READER_SETTINGS } from '../../src/shared/types'
 
 describe('reader settings migration', () => {
@@ -39,5 +39,69 @@ describe('reader settings migration', () => {
       migrateReaderSettings({ ...DEFAULT_READER_SETTINGS, autoScrollSpeed: 48 })
         .autoScrollSpeed
     ).toBe(48)
+  })
+
+  it('parses legacy cover data URLs for file migration', () => {
+    const png = parseCoverDataUrl(
+      `data:image/png;base64,${Buffer.from('cover-bytes').toString('base64')}`
+    )
+    expect(png?.extension).toBe('png')
+    expect(png?.bytes.toString()).toBe('cover-bytes')
+
+    const jpeg = parseCoverDataUrl('data:image/jpeg;base64,/9j/4AAQSkZJRg==')
+    expect(jpeg?.extension).toBe('jpg')
+
+    expect(parseCoverDataUrl('not-a-data-url')).toBeNull()
+    expect(parseCoverDataUrl('data:image/png;base64,')).toBeNull()
+  })
+
+  it('normalizes reading layout and daily goal settings', () => {
+    expect(
+      migrateReaderSettings({
+        ...DEFAULT_READER_SETTINGS,
+        readingLayout: 'paginated',
+        pageColumns: 2,
+        dailyReadingGoalMinutes: 30,
+        pdfTwoPage: true,
+        comicTwoPage: true
+      })
+    ).toMatchObject({
+      readingLayout: 'paginated',
+      pageColumns: 2,
+      dailyReadingGoalMinutes: 30,
+      pdfTwoPage: true,
+      comicTwoPage: true
+    })
+    expect(migrateReaderSettings({ ...DEFAULT_READER_SETTINGS }).comicTwoPage).toBe(false)
+    expect(
+      migrateReaderSettings({
+        ...DEFAULT_READER_SETTINGS,
+        pageColumns: 3 as never,
+        dailyReadingGoalMinutes: 9999
+      })
+    ).toMatchObject({ pageColumns: 1, dailyReadingGoalMinutes: 600 })
+    expect(
+      migrateReaderSettings({
+        ...DEFAULT_READER_SETTINGS,
+        readingLayout: 'unknown' as never,
+        dailyReadingGoalMinutes: -5
+      })
+    ).toMatchObject({ readingLayout: 'scroll', dailyReadingGoalMinutes: 0 })
+  })
+
+  it('normalizes the TTS engine and system voice', () => {
+    expect(
+      migrateReaderSettings({
+        ...DEFAULT_READER_SETTINGS,
+        ttsEngine: 'system',
+        systemTtsVoice: '  Huihui  '
+      })
+    ).toMatchObject({ ttsEngine: 'system', systemTtsVoice: 'Huihui' })
+    expect(
+      migrateReaderSettings({
+        ...DEFAULT_READER_SETTINGS,
+        ttsEngine: 'invalid' as never
+      }).ttsEngine
+    ).toBe('online')
   })
 })

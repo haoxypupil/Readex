@@ -12,11 +12,14 @@ import type {
   ImportProgressEvent
 } from '../shared/types'
 import { BOOK_FORMATS } from '../shared/types'
-import { ReadexStorage, writeJsonAtomic } from './storage'
+import { isComicImagePath, sortComicImages } from './comic'
+import { ReadexStorage, parseCoverDataUrl, writeJsonAtomic } from './storage'
 import { decodeTextBuffer } from './text'
 
 interface ImportCallbacks {
   onProgress?: (event: ImportProgressEvent) => void
+  /** 返回 true 时不再开始下一本书，正在处理的一本仍会完成。 */
+  shouldCancel?: () => boolean
 }
 
 interface ExtractedMetadata extends BookMetadata {
@@ -41,6 +44,16 @@ export async function importBookPaths(
 
   for (let index = 0; index < jobs.length; index += 1) {
     const job = jobs[index]
+    if (callbacks.shouldCancel?.()) {
+      for (const pending of jobs.slice(index)) {
+        if (pending.status !== 'queued') continue
+        pending.status = 'cancelled'
+        pending.progress = 100
+        pending.message = '已取消'
+        emitProgress(callbacks, batchId, pending, index, jobs.length)
+      }
+      break
+    }
     job.status = 'checking'
     emitProgress(callbacks, batchId, job, index, jobs.length)
 
@@ -87,7 +100,7 @@ async function importSingleBook(
 
   const extension = path.extname(job.path).slice(1).toLowerCase()
   if (!isBookFormat(extension)) {
-    throw new Error('不支持的格式，请选择 EPUB、MOBI、PDF 或 TXT 文件')
+    throw new Error('不支持的格式，请选择 EPUB、MOBI、AZW3、PDF 或 TXT 文件')
   }
 
   progress(8, '正在读取文件')
@@ -111,6 +124,15 @@ async function importSingleBook(
     progress(35, '正在提取书籍信息')
 
     const metadata = await extractMetadata(sourcePath, extension, job.fileName)
+    const coverFile = await writeCoverFile(temporaryDirectory, metadata.coverDataUrl)
+    const bookMetadata: BookMetadata = {
+      title: metadata.title,
+      author: metadata.author,
+      language: metadata.language,
+      publisher: metadata.publisher,
+      description: metadata.description,
+      chapterCount: metadata.chapterCount
+    }
     progress(72, '正在写入个人资料库')
 
     const bookId = sha256.slice(0, 20)
@@ -125,10 +147,14 @@ async function importSingleBook(
       size: stats.size,
       sha256,
       progress: 0,
-      ...metadata
+      ...bookMetadata,
+      ...(coverFile ? { coverFile } : {})
     }
 
-    await writeJsonAtomic(path.join(temporaryDirectory, 'metadata.json'), metadata)
+    await writeJsonAtomic(path.join(temporaryDirectory, 'metadata.json'), {
+      ...bookMetadata,
+      ...(coverFile ? { coverFile } : {})
+    })
     await writeJsonAtomic(path.join(temporaryDirectory, 'annotations.json'), {
       schemaVersion: 1,
       annotations: []
@@ -197,8 +223,17 @@ export function validateFileHeader(format: BookFormat, header: Buffer): void {
   if (format === 'epub' && !(header[0] === 0x50 && header[1] === 0x4b)) {
     throw new Error('EPUB 文件头无效或文件已损坏')
   }
-  if (format === 'mobi' && !ascii.includes('BOOKMOBI')) {
-    throw new Error('MOBI 文件头无效；AZW3/KF8 请确认文件实际为 MOBI 容器')
+  if (format === 'cbz' && !(header[0] === 0x50 && header[1] === 0x4b)) {
+    throw new Error('CBZ 文件头无效或文件已损坏')
+  }
+  if (format === 'mobi' || format === 'azw3') {
+    if (!ascii.includes('BOOKMOBI')) {
+      throw new Error(
+        format === 'azw3'
+          ? 'AZW3 文件头无效或文件已损坏（未加密的 KF8 文件应以 BOOKMOBI 开头）'
+          : 'MOBI 文件头无效或文件已损坏'
+      )
+    }
   }
   if (format === 'txt' && header.includes(0) && !looksLikeUtf16(header)) {
     throw new Error('TXT 文件包含二进制内容')
@@ -218,9 +253,40 @@ async function extractMetadata(
   fallbackFileName: string
 ): Promise<ExtractedMetadata> {
   if (format === 'epub') return extractEpubMetadata(filePath, fallbackFileName)
-  if (format === 'mobi') return extractMobiMetadata(filePath, fallbackFileName)
+  if (format === 'mobi' || format === 'azw3') {
+    return extractMobiMetadata(filePath, fallbackFileName)
+  }
   if (format === 'txt') return extractTxtMetadata(filePath, fallbackFileName)
+  if (format === 'cbz') return extractComicMetadata(filePath, fallbackFileName)
   return extractPdfMetadata(filePath, fallbackFileName)
+}
+
+async function extractComicMetadata(
+  filePath: string,
+  fallbackFileName: string
+): Promise<ExtractedMetadata> {
+  const archive = await JSZip.loadAsync(await fs.readFile(filePath))
+  const entries = sortComicImages(
+    Object.values(archive.files).filter((entry) => !entry.dir && isComicImagePath(entry.name))
+  )
+  if (!entries.length) throw new Error('CBZ 中未找到可显示的图片')
+
+  let coverDataUrl: string | undefined
+  try {
+    const data = await entries[0].async('nodebuffer')
+    if (data.byteLength <= 3 * 1024 * 1024) {
+      coverDataUrl = `data:${mimeForPath(entries[0].name)};base64,${data.toString('base64')}`
+    }
+  } catch {
+    coverDataUrl = undefined
+  }
+
+  return {
+    title: cleanBookTitle(fallbackFileName),
+    author: '未知作者',
+    chapterCount: entries.length,
+    coverDataUrl
+  }
 }
 
 async function extractEpubMetadata(
@@ -457,13 +523,13 @@ function mimeForPath(filePath: string): string {
       '.gif': 'image/gif',
       '.webp': 'image/webp',
       '.svg': 'image/svg+xml',
-      '.bmp': 'image/bmp'
+      '.bmp': 'image/bmp',
+      '.avif': 'image/avif'
     }[extension] ?? 'application/octet-stream'
   )
 }
 
-export function cleanBookTitle(fileName: string): string {
-  return path
+export function cleanBookTitle(fileName: string): string {  return path
     .basename(fileName, path.extname(fileName))
     .replace(/[_-]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -572,6 +638,18 @@ export function isPlausiblePdfMetadataTitle(value: string): boolean {
   if (/[\uFFFD\uE000-\uF8FF]/.test(normalized)) return false
   if (/\.(?:tiff?|jpe?g|png|gif|bmp|webp|psd|indd|pdf)\b/i.test(normalized)) return false
   return /[\p{L}\p{N}]/u.test(normalized)
+}
+
+async function writeCoverFile(
+  directory: string,
+  dataUrl?: string
+): Promise<string | undefined> {
+  if (!dataUrl) return undefined
+  const cover = parseCoverDataUrl(dataUrl)
+  if (!cover) return undefined
+  const fileName = `cover.${cover.extension}`
+  await fs.writeFile(path.join(directory, fileName), cover.bytes)
+  return fileName
 }
 
 function normalizeImportError(error: unknown): string {

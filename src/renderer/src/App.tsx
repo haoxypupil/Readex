@@ -7,17 +7,21 @@ import type {
   ImportBatchResult,
   ImportJob,
   LibraryData,
-  ReadingLocator
+  ReadingLocator,
+  ReadingStats
 } from '@shared/types'
 import { DEFAULT_SETTINGS, upgradeLegacyThemeColors } from '@shared/types'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { BookInfoDialog } from './components/BookInfoDialog'
 import { ImportOverlay } from './components/ImportOverlay'
 import { InfoDialog } from './components/InfoDialog'
 import { LibraryView } from './components/LibraryView'
 import { NotesDashboard } from './components/NotesDashboard'
 import { ProfileDialog } from './components/ProfileDialog'
+import { SearchView } from './components/SearchView'
 import { SettingsDialog } from './components/SettingsDialog'
 import { Sidebar } from './components/Sidebar'
+import { StatsView } from './components/StatsView'
 import { TitleBar, type MenuGroup } from './components/TitleBar'
 import { THEME_PRESETS } from '@shared/types'
 import logoUrl from './assets/readex-logo.png'
@@ -27,7 +31,7 @@ const ReaderView = lazy(() =>
   import('./components/ReaderView').then((module) => ({ default: module.ReaderView }))
 )
 
-type View = 'library' | 'notes' | 'book'
+type View = 'library' | 'notes' | 'search' | 'stats' | 'book'
 type InfoMode = 'shortcuts' | 'about' | 'licenses'
 
 export default function App(): React.JSX.Element {
@@ -36,6 +40,8 @@ export default function App(): React.JSX.Element {
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [annotationsLoaded, setAnnotationsLoaded] = useState(false)
   const [annotationsLoading, setAnnotationsLoading] = useState(false)
+  const [stats, setStats] = useState<ReadingStats | null>(null)
+  const [statsLoading, setStatsLoading] = useState(false)
   const [chapterProgress, setChapterProgress] = useState<ChapterProgress | null>(null)
   const [view, setView] = useState<View>('library')
   const [activeBookId, setActiveBookId] = useState<string | null>(null)
@@ -51,15 +57,26 @@ export default function App(): React.JSX.Element {
   const [importTotal, setImportTotal] = useState(0)
   const [importing, setImporting] = useState(false)
   const [removeTarget, setRemoveTarget] = useState<BookRecord | null>(null)
+  const [editTarget, setEditTarget] = useState<BookRecord | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const dragDepth = useRef(0)
   const importCloseTimer = useRef<number | null>(null)
+  const latestSettings = useRef(settings)
+  latestSettings.current = settings
 
   const refreshLibrary = useCallback(async (): Promise<BookRecord[]> => {
     const value = await window.readex.library.list()
     setLibrary(value)
     return value.books
   }, [])
+
+  useEffect(() => {
+    const refresh = (): void => {
+      void refreshLibrary()
+    }
+    window.addEventListener('readex:library-updated', refresh)
+    return () => window.removeEventListener('readex:library-updated', refresh)
+  }, [refreshLibrary])
 
   const loadAllAnnotations = useCallback(async (): Promise<void> => {
     setAnnotationsLoading(true)
@@ -103,15 +120,44 @@ export default function App(): React.JSX.Element {
   }, [annotationsLoaded, hydrated, loadAllAnnotations, view])
 
   useEffect(() => {
+    if (!hydrated || view !== 'stats') return
+    let active = true
+    setStatsLoading(true)
+    void window.readex.stats
+      .get()
+      .then((value) => {
+        if (active) setStats(value)
+      })
+      .finally(() => {
+        if (active) setStatsLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [hydrated, view])
+
+  useEffect(() => {
     if (!hydrated) return
-    void window.readex.settings.update(settings)
+    // 拖动排版滑块会高频触发设置变化，合并成一次落盘。
+    const timer = window.setTimeout(() => {
+      void window.readex.settings.update(latestSettings.current)
+    }, 300)
+    return () => window.clearTimeout(timer)
   }, [hydrated, settings])
+
+  useEffect(() => {
+    const flush = (): void => {
+      void window.readex.settings.update(latestSettings.current)
+    }
+    window.addEventListener('beforeunload', flush)
+    return () => window.removeEventListener('beforeunload', flush)
+  }, [])
 
   useEffect(() => {
     if (!hydrated) return
     const modalDimAmount = settingsOpen
       ? 0.18
-      : profileOpen || infoMode || removeTarget
+      : profileOpen || infoMode || removeTarget || editTarget
         ? 0.48
         : 0
     const titleBarTheme = createTitleBarTheme(settings.reader, modalDimAmount)
@@ -124,6 +170,7 @@ export default function App(): React.JSX.Element {
     infoMode,
     profileOpen,
     removeTarget,
+    editTarget,
     settings.reader.backgroundColor,
     settings.reader.textColor,
     settingsOpen
@@ -179,11 +226,16 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     const listener = (event: KeyboardEvent): void => {
       const modifier = event.ctrlKey || event.metaKey
-      const target = event.target as HTMLElement | null
+      const target = event.target instanceof HTMLElement ? event.target : null
       const editingText = Boolean(
         target?.matches('input, textarea, select, [contenteditable="true"]')
       )
-      const modalOpen = settingsOpen || profileOpen || Boolean(infoMode) || Boolean(removeTarget)
+      const modalOpen =
+        settingsOpen ||
+        profileOpen ||
+        Boolean(infoMode) ||
+        Boolean(removeTarget) ||
+        Boolean(editTarget)
       if (editingText || modalOpen) return
       if (modifier && event.key.toLowerCase() === 'o') {
         event.preventDefault()
@@ -209,6 +261,14 @@ export default function App(): React.JSX.Element {
       } else if (modifier && event.key === 'PageDown' && view === 'book') {
         event.preventDefault()
         dispatchReaderCommand('next-chapter')
+      } else if (
+        modifier &&
+        event.shiftKey &&
+        event.key.toLowerCase() === 'f' &&
+        view === 'book'
+      ) {
+        event.preventDefault()
+        dispatchReaderCommand('toggle-immersive')
       } else if (modifier && event.key.toLowerCase() === 'f' && view === 'book') {
         event.preventDefault()
         dispatchReaderCommand('open-search')
@@ -369,6 +429,7 @@ export default function App(): React.JSX.Element {
   }
 
   const changeReadingScale = (direction: -1 | 1): void => {
+    if (activeBook?.format === 'cbz') return
     setSettings((current) => ({
       ...current,
       reader: {
@@ -388,6 +449,7 @@ export default function App(): React.JSX.Element {
   }
 
   const resetReadingScale = (): void => {
+    if (activeBook?.format === 'cbz') return
     setSettings((current) => ({
       ...current,
       reader: {
@@ -406,6 +468,7 @@ export default function App(): React.JSX.Element {
       | 'open-search'
       | 'toggle-bookmark'
       | 'toggle-auto-scroll'
+      | 'toggle-immersive'
   ): void => {
     window.dispatchEvent(new CustomEvent('readex:reader-command', { detail: command }))
   }
@@ -432,6 +495,11 @@ export default function App(): React.JSX.Element {
           label: '导出当前笔记…',
           disabled: view !== 'book',
           onSelect: () => window.dispatchEvent(new Event('readex:export-notes'))
+        },
+        {
+          label: '编辑书籍信息…',
+          disabled: !activeBook,
+          onSelect: () => activeBook && setEditTarget(activeBook)
         },
         { label: '', separator: true, onSelect: () => undefined },
         {
@@ -472,7 +540,7 @@ export default function App(): React.JSX.Element {
         {
           label: '书内搜索',
           shortcut: 'Ctrl+F',
-          disabled: view !== 'book',
+          disabled: view !== 'book' || activeBook?.format === 'cbz',
           onSelect: () => dispatchReaderCommand('open-search')
         },
         {
@@ -484,26 +552,26 @@ export default function App(): React.JSX.Element {
         {
           label: '开始/暂停自动滚动',
           shortcut: 'Ctrl+Shift+A',
-          disabled: view !== 'book',
+          disabled: view !== 'book' || activeBook?.format === 'cbz',
           onSelect: () => dispatchReaderCommand('toggle-auto-scroll')
         },
         { label: '', separator: true, onSelect: () => undefined },
         {
           label: activeBook?.format === 'pdf' ? '放大页面' : '增大字号',
           shortcut: 'Ctrl+=',
-          disabled: view !== 'book',
+          disabled: view !== 'book' || activeBook?.format === 'cbz',
           onSelect: () => changeReadingScale(1)
         },
         {
           label: activeBook?.format === 'pdf' ? '缩小页面' : '减小字号',
           shortcut: 'Ctrl+-',
-          disabled: view !== 'book',
+          disabled: view !== 'book' || activeBook?.format === 'cbz',
           onSelect: () => changeReadingScale(-1)
         },
         {
           label: activeBook?.format === 'pdf' ? '恢复默认缩放' : '恢复默认字号',
           shortcut: 'Ctrl+0',
-          disabled: view !== 'book',
+          disabled: view !== 'book' || activeBook?.format === 'cbz',
           onSelect: resetReadingScale
         },
         { label: '', separator: true, onSelect: () => undefined },
@@ -520,6 +588,16 @@ export default function App(): React.JSX.Element {
           onSelect: () => setView('library')
         },
         {
+          label: '阅读统计',
+          checked: view === 'stats',
+          onSelect: () => setView('stats')
+        },
+        {
+          label: '全文搜索',
+          checked: view === 'search',
+          onSelect: () => setView('search')
+        },
+        {
           label: '目录',
           shortcut: 'Ctrl+Shift+T',
           onSelect: () =>
@@ -532,6 +610,12 @@ export default function App(): React.JSX.Element {
             window.dispatchEvent(new CustomEvent('readex:set-panel', { detail: 'notes' }))
         },
         { label: '', separator: true, onSelect: () => undefined },
+        {
+          label: '沉浸阅读',
+          shortcut: 'Ctrl+Shift+F',
+          disabled: view !== 'book',
+          onSelect: () => dispatchReaderCommand('toggle-immersive')
+        },
         { label: '切换阅读主题', onSelect: cycleTheme },
         { label: '', separator: true, onSelect: () => undefined },
         { label: '全屏', shortcut: 'F11', onSelect: () => void toggleFullScreen() }
@@ -604,6 +688,8 @@ export default function App(): React.JSX.Element {
           currentView={view}
           onToggle={() => setSidebarCollapsed((value) => !value)}
           onOpenLibrary={() => setView('library')}
+          onOpenStats={() => setView('stats')}
+          onOpenSearch={() => setView('search')}
           onOpenBook={openBook}
           onCloseWorkspace={closeWorkspace}
           onOpenNotes={() => setView('notes')}
@@ -621,6 +707,7 @@ export default function App(): React.JSX.Element {
               onImportPaths={importPaths}
               onOpenBook={openBook}
               onReveal={(bookId) => void window.readex.library.reveal(bookId)}
+              onEdit={setEditTarget}
               onRemove={setRemoveTarget}
             />
           )}
@@ -630,6 +717,20 @@ export default function App(): React.JSX.Element {
               annotations={annotations}
               loading={annotationsLoading}
               onOpenBook={(bookId, annotation) => openBook(bookId, annotation.locator)}
+            />
+          )}
+          {view === 'stats' && (
+            <StatsView
+              stats={stats}
+              books={library.books}
+              loading={statsLoading}
+              goalMinutes={settings.reader.dailyReadingGoalMinutes}
+            />
+          )}
+          {view === 'search' && (
+            <SearchView
+              books={library.books}
+              onOpenBook={(bookId, locator) => openBook(bookId, locator)}
             />
           )}
           {view === 'book' && activeBook && (
@@ -668,6 +769,12 @@ export default function App(): React.JSX.Element {
                     }
                   }))
                 }
+                onComicTwoPageChange={(comicTwoPage) =>
+                  setSettings((current) => ({
+                    ...current,
+                    reader: { ...current.reader, comicTwoPage }
+                  }))
+                }
               />
             </Suspense>
           )}
@@ -682,7 +789,12 @@ export default function App(): React.JSX.Element {
         </div>
       )}
       {importing && (
-        <ImportOverlay jobs={importJobs} completed={importCompleted} total={importTotal} />
+        <ImportOverlay
+          jobs={importJobs}
+          completed={importCompleted}
+          total={importTotal}
+          onCancel={() => void window.readex.library.cancelImport()}
+        />
       )}
       {settingsOpen && (
         <SettingsDialog
@@ -708,6 +820,13 @@ export default function App(): React.JSX.Element {
           danger
           onConfirm={() => void removeBook()}
           onCancel={() => setRemoveTarget(null)}
+        />
+      )}
+      {editTarget && (
+        <BookInfoDialog
+          book={library.books.find((book) => book.id === editTarget.id) ?? editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => void refreshLibrary()}
         />
       )}
     </div>

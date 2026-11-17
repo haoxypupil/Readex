@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, Copy, MessageSquarePlus, Trash2, X } from 'lucide-react'
+import { Check, Copy, History, MessageSquarePlus, Trash2, X } from 'lucide-react'
 import type { Annotation, AnnotationColor } from '@shared/types'
 import { ANNOTATION_COLORS } from '@shared/types'
 import type { SelectedText } from '../lib/textAnchors'
@@ -23,8 +23,10 @@ export function SelectionToolbar({
 }: SelectionToolbarProps): React.JSX.Element {
   const [noteOpen, setNoteOpen] = useState(initialNoteOpen || Boolean(annotation?.note))
   const [note, setNote] = useState(annotation?.note ?? '')
+  const [historyOpen, setHistoryOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const text = annotation?.text ?? selection?.text ?? ''
+  const revisions = annotation?.revisions ?? []
   const toolbarWidth = Math.min(400, window.innerWidth - 24)
   const anchorX = annotation
     ? window.innerWidth / 2
@@ -138,6 +140,43 @@ export function SelectionToolbar({
             }}
             placeholder="写下你的想法…"
           />
+          {revisions.length > 0 && noteOpen && (
+            <div className="note-history">
+              <button
+                className="note-history-toggle"
+                type="button"
+                aria-expanded={historyOpen}
+                onClick={() => setHistoryOpen((value) => !value)}
+              >
+                <History size={13} />
+                历史版本 {revisions.length}
+              </button>
+              {historyOpen && (
+                <div className="note-history-list">
+                  {revisions.map((revision, index) => (
+                    <button
+                      type="button"
+                      key={`${revision.updatedAt}-${index}`}
+                      title="载入此版本到编辑器"
+                      onClick={() => {
+                        setNote(revision.note)
+                        setHistoryOpen(false)
+                      }}
+                    >
+                      <span
+                        className="note-history-color"
+                        style={{ background: ANNOTATION_COLORS[revision.color] }}
+                      />
+                      <span className="note-history-text">
+                        {revision.note.trim() || '（空笔记）'}
+                      </span>
+                      <time>{new Date(revision.updatedAt).toLocaleString('zh-CN')}</time>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="note-editor-footer">
             <span>
               <kbd>Enter</kbd> 保存

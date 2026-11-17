@@ -9,9 +9,13 @@ import type {
   LibraryData,
   ProfileInfo,
   ReadingLocator,
-  ReadingState
+  ReadingState,
+  ReadingStats
 } from '../shared/types'
-import { DEFAULT_SETTINGS } from '../shared/types'
+import {
+  DEFAULT_READING_STATS,
+  DEFAULT_SETTINGS
+} from '../shared/types'
 import {
   DEFAULT_TTS_VOICE,
   TTS_MAX_RATE,
@@ -30,6 +34,7 @@ export interface DataPaths {
   ttsCache: string
   settings: string
   library: string
+  stats: string
 }
 
 function getDataRoot(): string {
@@ -56,7 +61,8 @@ export function getDataPaths(): DataPaths {
     parseCache: path.join(cache, 'parsed'),
     ttsCache: path.join(cache, 'tts'),
     settings: path.join(personal, 'settings.json'),
-    library: path.join(personal, 'library.json')
+    library: path.join(personal, 'library.json'),
+    stats: path.join(personal, 'stats.json')
   }
 }
 
@@ -104,6 +110,11 @@ export class ReadexStorage {
   private paths = getDataPaths()
   private libraryWrite = Promise.resolve()
   private settingsWrite = Promise.resolve()
+  private statsWrite = Promise.resolve()
+  /** 书库里的进度展示按秒级节流写入，避免每次翻页都重写整个 library.json。 */
+  private progressSync = new Map<string, { at: number; progress: number }>()
+  private static readonly PROGRESS_SYNC_INTERVAL_MS = 15_000
+  private static readonly PROGRESS_SYNC_DELTA = 0.01
 
   async initialize(): Promise<void> {
     this.paths = await ensureDataDirectories()
@@ -112,12 +123,52 @@ export class ReadexStorage {
         schemaVersion: 1,
         books: []
       } satisfies LibraryData),
-      ensureJsonFile(this.paths.settings, DEFAULT_SETTINGS)
+      ensureJsonFile(this.paths.settings, DEFAULT_SETTINGS),
+      ensureJsonFile(this.paths.stats, DEFAULT_READING_STATS)
     ])
+    // 旧版本的封面内嵌在 library.json 中，启动时逐个落成文件，失败则下次再试。
+    await this.migrateCoverFiles().catch(() => undefined)
+  }
+
+  private async migrateCoverFiles(): Promise<void> {
+    const library = await this.getLibrary()
+    let changed = false
+    for (const book of library.books) {
+      if (!book.coverDataUrl) continue
+      if (book.coverFile) {
+        // 已经文件化，只需清理遗留的 data URL。
+        delete book.coverDataUrl
+        changed = true
+        continue
+      }
+      const cover = parseCoverDataUrl(book.coverDataUrl)
+      if (!cover) {
+        delete book.coverDataUrl
+        changed = true
+        continue
+      }
+      try {
+        const directory = this.getBookDirectory(book.id)
+        await fs.mkdir(directory, { recursive: true })
+        const fileName = `cover.${cover.extension}`
+        await fs.writeFile(path.join(directory, fileName), cover.bytes)
+        book.coverFile = fileName
+        delete book.coverDataUrl
+        changed = true
+      } catch {
+        // 保留原始 data URL，下次启动继续迁移。
+      }
+    }
+    if (changed) await this.saveLibrary(library)
   }
 
   getPaths(): DataPaths {
     return this.paths
+  }
+
+  /** 恢复备份后清空进度节流状态，让新书库立即开始记录。 */
+  resetProgressSync(): void {
+    this.progressSync.clear()
   }
 
   async getLibrary(): Promise<LibraryData> {
@@ -168,6 +219,7 @@ export class ReadexStorage {
     const library = await this.getLibrary()
     const book = library.books.find((item) => item.id === bookId)
     if (!book) return
+    this.progressSync.delete(bookId)
 
     const nextLibrary = {
       ...library,
@@ -183,6 +235,39 @@ export class ReadexStorage {
 
   getBookDirectory(bookId: string): string {
     return path.join(this.paths.books, bookId)
+  }
+
+  async replaceCover(bookId: string, sourcePath: string): Promise<BookRecord | null> {
+    const book = await this.getBookRecord(bookId)
+    if (!book) return null
+    const extension = COVER_EXTENSIONS[path.extname(sourcePath).toLowerCase()]
+    if (!extension) throw new Error('仅支持 PNG、JPEG、WebP、GIF 或 BMP 图片')
+    const stat = await fs.stat(sourcePath).catch(() => null)
+    if (!stat?.isFile()) throw new Error('无法读取封面文件')
+    if (stat.size > 8 * 1024 * 1024) throw new Error('封面图片不能超过 8 MB')
+
+    const directory = this.getBookDirectory(bookId)
+    await fs.mkdir(directory, { recursive: true })
+    const fileName = `cover.${extension}`
+    await fs.copyFile(sourcePath, path.join(directory, fileName))
+    if (book.coverFile && book.coverFile !== fileName) {
+      await fs.rm(path.join(directory, book.coverFile), { force: true })
+    }
+    return this.updateBook(bookId, { coverFile: fileName })
+  }
+
+  /** 渲染层为 PDF 生成首屏封面后回传，只有书籍尚无封面时才写入。 */
+  async saveGeneratedCover(bookId: string, dataUrl: string): Promise<BookRecord | null> {
+    const book = await this.getBookRecord(bookId)
+    if (!book) return null
+    if (book.coverFile) return book
+    const cover = parseCoverDataUrl(dataUrl)
+    if (!cover || cover.bytes.length > 1.5 * 1024 * 1024) return null
+    const fileName = `cover.${cover.extension}`
+    const directory = this.getBookDirectory(bookId)
+    await fs.mkdir(directory, { recursive: true })
+    await fs.writeFile(path.join(directory, fileName), cover.bytes)
+    return this.updateBook(bookId, { coverFile: fileName })
   }
 
   getBookSourcePath(book: Pick<BookRecord, 'id' | 'format'>): string {
@@ -260,8 +345,7 @@ export class ReadexStorage {
     return annotations
   }
 
-  async getReadingState(bookId: string): Promise<ReadingState | null> {
-    const file = path.join(this.getBookDirectory(bookId), 'reading-state.json')
+  async getReadingState(bookId: string): Promise<ReadingState | null> {    const file = path.join(this.getBookDirectory(bookId), 'reading-state.json')
     try {
       return await readJson<ReadingState | null>(file, null)
     } catch {
@@ -270,16 +354,76 @@ export class ReadexStorage {
   }
 
   async saveReadingState(bookId: string, locator: ReadingLocator, progress: number): Promise<void> {
+    const normalized = Math.max(0, Math.min(1, progress))
     await writeJsonAtomic(path.join(this.getBookDirectory(bookId), 'reading-state.json'), {
       schemaVersion: 1,
       locator,
-      progress: Math.max(0, Math.min(1, progress)),
+      progress: normalized,
       updatedAt: new Date().toISOString()
     } satisfies ReadingState)
+
+    const now = Date.now()
+    const previous = this.progressSync.get(bookId)
+    const due =
+      !previous ||
+      now - previous.at >= ReadexStorage.PROGRESS_SYNC_INTERVAL_MS ||
+      Math.abs(normalized - previous.progress) >= ReadexStorage.PROGRESS_SYNC_DELTA
+    if (!due) return
+
+    this.progressSync.set(bookId, { at: now, progress: normalized })
     await this.updateBook(bookId, {
       lastLocation: locator,
-      progress: Math.max(0, Math.min(1, progress))
+      progress: normalized
     })
+  }
+
+  async getStats(): Promise<ReadingStats> {
+    const stored = await readJson<ReadingStats>(this.paths.stats, DEFAULT_READING_STATS)
+    const days: Record<string, number> = {}
+    for (const [date, value] of Object.entries(stored.days ?? {})) {
+      const seconds = Number(value)
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(seconds) && seconds > 0) {
+        days[date] = Math.round(seconds)
+      }
+    }
+    const books: Record<string, number> = {}
+    for (const [bookId, value] of Object.entries(stored.books ?? {})) {
+      const seconds = Number(value)
+      if (bookId && Number.isFinite(seconds) && seconds > 0) books[bookId] = Math.round(seconds)
+    }
+    const totalSeconds = Number(stored.totalSeconds)
+    return {
+      schemaVersion: 1,
+      totalSeconds: Number.isFinite(totalSeconds) && totalSeconds > 0 ? Math.round(totalSeconds) : 0,
+      days,
+      books,
+      updatedAt: typeof stored.updatedAt === 'string' ? stored.updatedAt : undefined
+    }
+  }
+
+  async addReadingTime(bookId: string, seconds: number): Promise<ReadingStats> {
+    const amount = Math.max(0, Math.min(1200, Math.round(Number(seconds) || 0)))
+    if (!amount) return this.getStats()
+    const safeBookId = typeof bookId === 'string' && bookId.length <= 64 ? bookId : ''
+    const run = this.statsWrite.then(async () => {
+      const stats = await this.getStats()
+      const date = localDateKey(new Date())
+      stats.days[date] = (stats.days[date] ?? 0) + amount
+      stats.totalSeconds += amount
+      if (safeBookId) stats.books[safeBookId] = (stats.books[safeBookId] ?? 0) + amount
+      const cutoff = localDateKey(new Date(Date.now() - 366 * 86_400_000))
+      for (const key of Object.keys(stats.days)) {
+        if (key < cutoff) delete stats.days[key]
+      }
+      stats.updatedAt = new Date().toISOString()
+      await writeJsonAtomic(this.paths.stats, stats)
+      return stats
+    })
+    this.statsWrite = run.then(
+      () => undefined,
+      () => undefined
+    )
+    return run
   }
 
   async getProfileInfo(): Promise<ProfileInfo> {
@@ -297,11 +441,21 @@ export class ReadexStorage {
       cachePath: this.paths.cache,
       bookCount: books.length,
       annotationCount,
-      sizeBytes
+      sizeBytes,
+      cacheBytes: await directorySize(this.paths.cache)
     }
   }
 
+  async clearTtsCache(): Promise<{ freedBytes: number }> {
+    const directory = this.paths.ttsCache
+    const freedBytes = await directorySize(directory)
+    await fs.rm(directory, { recursive: true, force: true })
+    await fs.mkdir(directory, { recursive: true })
+    return { freedBytes }
+  }
+
   async resetPersonalData(): Promise<void> {
+    this.progressSync.clear()
     await fs.rm(this.paths.personal, { recursive: true, force: true })
     await fs.mkdir(this.paths.books, { recursive: true })
     await writeJsonAtomic(this.paths.library, {
@@ -309,6 +463,7 @@ export class ReadexStorage {
       books: []
     } satisfies LibraryData)
     await writeJsonAtomic(this.paths.settings, DEFAULT_SETTINGS)
+    await writeJsonAtomic(this.paths.stats, DEFAULT_READING_STATS)
   }
 }
 
@@ -325,6 +480,16 @@ export function migrateReaderSettings(
       : DEFAULT_TTS_VOICE
   reader.ttsRate = clampNumber(input?.ttsRate, TTS_MIN_RATE, TTS_MAX_RATE, 1)
   reader.ttsVolume = clampNumber(input?.ttsVolume, TTS_MIN_VOLUME, TTS_MAX_VOLUME, 1)
+  reader.ttsEngine = input?.ttsEngine === 'system' ? 'system' : 'online'
+  reader.systemTtsVoice =
+    typeof input?.systemTtsVoice === 'string' ? input.systemTtsVoice.trim().slice(0, 120) : ''
+  reader.readingLayout = input?.readingLayout === 'paginated' ? 'paginated' : 'scroll'
+  reader.pageColumns = input?.pageColumns === 2 ? 2 : 1
+  reader.pdfTwoPage = input?.pdfTwoPage === true
+  reader.comicTwoPage = input?.comicTwoPage === true
+  reader.dailyReadingGoalMinutes = Math.round(
+    clampNumber(input?.dailyReadingGoalMinutes, 0, 600, 0)
+  )
   if (input?.floatingReaderWidth === undefined) {
     reader.floatingReaderWidth = input?.contentWidth ?? reader.contentWidth
   }
@@ -374,6 +539,40 @@ function clampNumber(
 ): number {
   if (!Number.isFinite(value)) return fallback
   return Math.max(minimum, Math.min(maximum, value as number))
+}
+
+function localDateKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${date.getFullYear()}-${month}-${day}`
+}
+
+const COVER_EXTENSIONS: Record<string, string> = {
+  '.png': 'png',
+  '.jpg': 'jpg',
+  '.jpeg': 'jpg',
+  '.webp': 'webp',
+  '.gif': 'gif',
+  '.bmp': 'bmp'
+}
+
+/** 解析旧版本保存的封面 data URL，供迁移和导入共用。 */
+export function parseCoverDataUrl(
+  value: string
+): { bytes: Buffer; extension: string } | null {
+  const match = /^data:image\/(png|jpe?g|webp|gif|bmp|avif|svg\+xml);base64,([a-z0-9+/=\s]+)$/i.exec(
+    value
+  )
+  if (!match) return null
+  const mime = match[1].toLowerCase()
+  const extension = mime === 'jpeg' || mime === 'jpg' ? 'jpg' : mime === 'svg+xml' ? 'svg' : mime
+  try {
+    const bytes = Buffer.from(match[2], 'base64')
+    if (!bytes.length || bytes.length > 4 * 1024 * 1024) return null
+    return { bytes, extension }
+  } catch {
+    return null
+  }
 }
 
 async function ensureJsonFile(filePath: string, fallback: unknown): Promise<void> {

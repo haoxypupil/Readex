@@ -50,6 +50,12 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
   const settingsRef = useRef(settings)
   const autoScrollControllerRef = useRef<AutoScrollController | null>(null)
   const autoScrollEndHandler = useRef<(() => void) | null>(null)
+  // 记录已画到页面上的 CFI，删除标注时才能把对应高亮一并移除。
+  const appliedHighlightCfis = useRef(new Set<string>())
+  const searchHighlightCfi = useRef<string | null>(null)
+  const lastCfiRef = useRef<string | null>(null)
+  const lastBookIdRef = useRef<string | null>(null)
+  const lastPageTurnRef = useRef(0)
 
   useEffect(() => {
     autoScrollEndHandler.current = onAutoScrollEnd ?? null
@@ -65,6 +71,14 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
     let active = true
     setLoading(true)
     setError('')
+    appliedHighlightCfis.current.clear()
+    searchHighlightCfi.current = null
+    lastPageTurnRef.current = 0
+    if (lastBookIdRef.current !== book.id) {
+      lastBookIdRef.current = book.id
+      lastCfiRef.current = null
+    }
+    const paginated = settings.readingLayout === 'paginated'
 
     const resourceUrl = window.readex.book.getResourceUrl(book.id, book.format)
     void (async () => {
@@ -73,8 +87,10 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
       const rendition = epubBook.renderTo(mountRef.current, {
         width: '100%',
         height: '100%',
-        flow: 'scrolled-doc',
-        manager: 'continuous',
+        flow: paginated ? 'paginated' : 'scrolled-doc',
+        manager: paginated ? 'default' : 'continuous',
+        spread: paginated && settings.pageColumns === 2 ? 'auto' : 'none',
+        minSpreadWidth: 760,
         allowScriptedContent: false
       })
       bookRef.current = epubBook
@@ -94,6 +110,14 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
           event.preventDefault()
           onReaderPointerDown()
           const current = settingsRef.current
+          if (current.readingLayout === 'paginated') {
+            const now = Date.now()
+            if (now - lastPageTurnRef.current < 320) return
+            lastPageTurnRef.current = now
+            if (event.deltaY > 0) void renditionRef.current?.next()
+            else void renditionRef.current?.prev()
+            return
+          }
           smoothScrollBy(
             container,
             normalizedWheelDelta(
@@ -148,7 +172,7 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
           }
         }
         const onKeyDown = (event: KeyboardEvent): void => {
-          if (!isReadexShortcut(event)) return
+          if (!isReadexShortcut(event) && !isReaderPageKey(event)) return
           event.preventDefault()
           window.dispatchEvent(
             new KeyboardEvent('keydown', {
@@ -228,12 +252,34 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
       })
 
       rendition.on('relocated', (location: {
-        start: { cfi: string; href?: string; percentage?: number }
+        start: {
+          cfi: string
+          href?: string
+          percentage?: number
+          index?: number
+          displayed?: { page: number; total: number }
+        }
       }) => {
-        const progress =
-          location.start.percentage && location.start.percentage > 0
-            ? location.start.percentage
-            : getContainerProgress(mountRef.current)
+        if (location.start.cfi) lastCfiRef.current = location.start.cfi
+        let progress: number
+        if (settingsRef.current.readingLayout === 'paginated') {
+          const spineLength =
+            (epubBook.spine as unknown as { length?: number }).length ?? 1
+          const displayed = location.start.displayed
+          const pageFraction =
+            displayed && displayed.total > 0
+              ? Math.max(0, displayed.page - 1) / displayed.total
+              : 0
+          progress =
+            location.start.percentage && location.start.percentage > 0
+              ? location.start.percentage
+              : Math.min(1, ((location.start.index ?? 0) + pageFraction) / Math.max(1, spineLength))
+        } else {
+          progress =
+            location.start.percentage && location.start.percentage > 0
+              ? location.start.percentage
+              : getContainerProgress(mountRef.current)
+        }
         onProgress(
           {
             type: 'epub-cfi',
@@ -283,12 +329,14 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
           const state = await window.readex.reading.getState(book.id)
           const savedTarget = state?.locator?.value?.trim() || undefined
           const pending = pendingTarget.current
-          const target =
+          const pendingValue =
             typeof pending === 'string' || typeof pending === 'number'
               ? pending
               : pending && 'type' in pending
                 ? pending.value
-                : pending?.href ?? pending?.chapterId ?? savedTarget
+                : pending?.href ?? pending?.chapterId ?? undefined
+          // 切换布局重建 rendition 时优先回到当前页，其次才是待跳转目标和上次保存位置。
+          const target = lastCfiRef.current ?? pendingValue ?? savedTarget
           if (target) {
             try {
               if (typeof target === 'number') {
@@ -327,10 +375,10 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
       bookRef.current = null
       renditionRef.current = null
     }
-  }, [book.id])
+  }, [book.id, settings.pageColumns, settings.readingLayout])
 
   useEffect(() => {
-    if (loading) return
+    if (loading || settings.readingLayout === 'paginated') return
     const container = mountRef.current?.querySelector('.epub-container') as HTMLElement | null
     if (!container) return
 
@@ -357,7 +405,29 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
       cancelAnimationFrame(frame)
       container.removeEventListener('scroll', reportScroll)
     }
-  }, [loading, onProgress])
+  }, [loading, onProgress, settings.readingLayout])
+
+  useEffect(() => {
+    if (loading) return
+    const rendition = renditionRef.current
+    const mount = mountRef.current
+    if (!rendition || !mount) return
+    let timer: number | null = null
+    const observer = new ResizeObserver(() => {
+      if (timer) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        const current = renditionRef.current
+        const element = mountRef.current
+        if (!current || !element) return
+        current.resize(element.clientWidth, element.clientHeight)
+      }, 120)
+    })
+    observer.observe(mount)
+    return () => {
+      if (timer) window.clearTimeout(timer)
+      observer.disconnect()
+    }
+  }, [loading, settings.pageColumns, settings.readingLayout])
 
   useEffect(() => {
     const rendition = renditionRef.current
@@ -385,6 +455,12 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
   useEffect(() => {
     const rendition = renditionRef.current
     if (!rendition || loading) return
+    const nextCfis = new Set(
+      annotations.map((annotation) => annotation.locator.value).filter(Boolean)
+    )
+    for (const cfi of appliedHighlightCfis.current) {
+      if (!nextCfis.has(cfi)) rendition.annotations.remove(cfi, 'highlight')
+    }
     for (const annotation of annotations) {
       rendition.annotations.remove(annotation.locator.value, 'highlight')
       rendition.annotations.highlight(
@@ -399,6 +475,7 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
         }
       )
     }
+    appliedHighlightCfis.current = nextCfis
   }, [annotations, loading, onOpenAnnotation])
 
   const goTo = (target: ReadingLocator | TocItem): void => {
@@ -450,6 +527,14 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
   }
 
   const scrollBy = (delta: number): void => {
+    if (settingsRef.current.readingLayout === 'paginated') {
+      const rendition = renditionRef.current
+      if (!rendition || !delta) return
+      onReaderPointerDown()
+      if (delta > 0) void rendition.next()
+      else void rendition.prev()
+      return
+    }
     const container = mountRef.current?.querySelector('.epub-container') as HTMLElement | null
     if (container) {
       onReaderPointerDown()
@@ -514,6 +599,7 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
   }
 
   const startAutoScroll = (): AutoScrollStatus => {
+    if (settingsRef.current.readingLayout === 'paginated') return 'unavailable'
     return ensureAutoScrollController()?.start() ?? 'unavailable'
   }
 
@@ -543,16 +629,57 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
         ]
       })
     const snapshot = buildSpeechSnapshot(roots, container.scrollTop)
+    if (snapshot && settingsRef.current.readingLayout === 'paginated') {
+      const index = snapshot.segments.findIndex((segment) => {
+        const frame = segment.range.startContainer.ownerDocument?.defaultView?.frameElement
+        if (!frame) return false
+        const rect = segment.range.getBoundingClientRect()
+        return (
+          rect.height > 0 &&
+          rect.bottom > 0 &&
+          rect.top < frame.clientHeight &&
+          rect.right > 0 &&
+          rect.left < frame.clientWidth
+        )
+      })
+      if (index >= 0) snapshot.startIndex = index
+    }
     speechSegments.current = new Map(
       snapshot?.segments.map((segment) => [segment.id, segment.range]) ?? []
     )
     return snapshot
   }
 
+  const revealRangeInPaginatedView = async (range: Range, attempt = 0): Promise<void> => {
+    if (attempt > 10) return
+    const rendition = renditionRef.current
+    const frame = range.startContainer.ownerDocument?.defaultView?.frameElement
+    if (!rendition || !frame) return
+    const rect = range.getBoundingClientRect()
+    const visible =
+      rect.height > 0 &&
+      rect.bottom > 0 &&
+      rect.top < frame.clientHeight &&
+      rect.right > 0 &&
+      rect.left < frame.clientWidth
+    if (visible) return
+    const forward = rect.left >= frame.clientWidth || rect.top >= frame.clientHeight
+    const backward = rect.left < 0 || rect.bottom < 0
+    if (!forward && !backward) return
+    if (forward) await rendition.next()
+    else await rendition.prev()
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    return revealRangeInPaginatedView(range, attempt + 1)
+  }
+
   const scrollToSpeechSegment = (segmentId: string): void => {
     const container = mountRef.current?.querySelector('.epub-container') as HTMLElement | null
     const range = speechSegments.current.get(segmentId)
     if (!container || !range) return
+    if (settingsRef.current.readingLayout === 'paginated') {
+      void revealRangeInPaginatedView(range)
+      return
+    }
     scrollRangeToReadingPosition(
       range,
       container,
@@ -568,17 +695,51 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
   const advanceSpeechSection = async (): Promise<boolean> => {
     const rendition = renditionRef.current
     if (!rendition) return false
-    const locationHref = (): string => {
+    const currentCfi = (): string => {
       const location = rendition.currentLocation() as unknown as {
-        start?: { href?: string }
+        start?: { cfi?: string; href?: string }
       }
-      return location.start?.href ?? ''
+      return location.start?.cfi ?? location.start?.href ?? ''
     }
-    const before = locationHref()
+    const before = currentCfi()
     await rendition.next()
     await new Promise((resolve) => window.setTimeout(resolve, 260))
-    const after = locationHref()
+    const after = currentCfi()
     return Boolean(after && after !== before)
+  }
+
+  const setSearchHighlight = (result: SearchResult | null): void => {
+    const rendition = renditionRef.current
+    if (!rendition) return
+    const previous = searchHighlightCfi.current
+    if (previous) {
+      rendition.annotations.remove(previous, 'highlight')
+      searchHighlightCfi.current = null
+      // epub.js 按 CFI 移除全部高亮；若该段本来就是用户标注，需立即重绘。
+      const annotation = annotations.find((item) => item.locator.value === previous)
+      if (annotation) {
+        rendition.annotations.highlight(
+          annotation.locator.value,
+          { annotationId: annotation.id },
+          () => onOpenAnnotation(annotation),
+          `rdx-epub-${annotation.color}`,
+          {
+            fill: ANNOTATION_COLORS[annotation.color],
+            'fill-opacity': '0.38',
+            'mix-blend-mode': 'multiply'
+          }
+        )
+      }
+    }
+    const cfi = result?.locator?.value?.trim()
+    if (!cfi) return
+    // 与用户高亮同范围时不再叠加搜索高亮，避免二次移除互相覆盖。
+    if (annotations.some((annotation) => annotation.locator.value === cfi)) return
+    rendition.annotations.highlight(cfi, {}, undefined, 'rdx-search', {
+      fill: '#f5a623',
+      'fill-opacity': '0.35'
+    })
+    searchHighlightCfi.current = cfi
   }
 
   useEffect(() => {
@@ -594,7 +755,8 @@ export const EpubReader = forwardRef<ReaderHandle, ReaderProps>(function EpubRea
     getSpeechSnapshot,
     scrollToSpeechSegment,
     setSpeechSegmentHighlight,
-    advanceSpeechSection
+    advanceSpeechSection,
+    setSearchHighlight
   }))
 
   useEffect(() => removeSpeechHighlight, [book.id])
@@ -628,6 +790,11 @@ function isReadexShortcut(event: KeyboardEvent): boolean {
     ['o', ',', 'f', 'd', '=', '+', '-', '0', 'w', 'pageup', 'pagedown'].includes(key) ||
     (event.shiftKey && ['a', 'b', 't', 'n'].includes(key))
   )
+}
+
+function isReaderPageKey(event: KeyboardEvent): boolean {
+  if (event.ctrlKey || event.metaKey || event.altKey) return false
+  return event.key === 'PageDown' || event.key === 'PageUp' || event.key === ' '
 }
 
 function noop(): void {}

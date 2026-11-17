@@ -3,7 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import iconv from 'iconv-lite'
 import { afterEach, describe, expect, it } from 'vitest'
-import { parseTxtContent } from '../../src/main/content'
+import { buildTxtToc, parseTxtContent } from '../../src/main/content'
+import type { NormalizedChapter } from '../../src/shared/types'
 
 const temporaryFiles: string[] = []
 
@@ -34,5 +35,41 @@ describe('TXT parsing', () => {
 
     expect(content.chapters?.[0].text).toContain('中文电子书')
     expect(content.chapters?.[0].text).toContain('第二章')
+  })
+})
+
+describe('TXT table of contents', () => {
+  it('maps detected chapter headings back to their fixed-size chunks', () => {
+    const chapters: NormalizedChapter[] = [
+      {
+        id: 'txt-1',
+        label: '第 1 节',
+        html: '',
+        text: `前言正文。\n第一章 开端\n${'内容。\n'.repeat(20)}`
+      },
+      {
+        id: 'txt-2',
+        label: '第 2 节',
+        html: '',
+        text: `第二章 转折\n${'内容。\n'.repeat(20)}`
+      }
+    ]
+    const text = chapters.map((chapter) => chapter.text).join('')
+    const toc = buildTxtToc(text, chapters)
+
+    expect(toc.map((item) => item.label)).toEqual(['第一章 开端', '第二章 转折'])
+    expect(toc[0].chapterId).toBe('txt-1')
+    expect(toc[0].start).toBe(text.indexOf('第一章 开端'))
+    expect(toc[1].chapterId).toBe('txt-2')
+    expect(toc[1].start).toBe(0)
+  })
+
+  it('falls back to fixed sections when the text has no headings', () => {
+    const chapters: NormalizedChapter[] = [
+      { id: 'txt-1', label: '第 1 节', html: '', text: '只有一段普通文字。' }
+    ]
+    const toc = buildTxtToc(chapters[0].text, chapters)
+
+    expect(toc).toEqual([{ id: 'txt-1', label: '第 1 节' }])
   })
 })

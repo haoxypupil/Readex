@@ -27,28 +27,39 @@ export async function openMobiDocument(
   data: Uint8Array,
   resourceDirectory: string
 ): Promise<MobiDocument> {
-  const mobi = (await initMobiFile(data, resourceDirectory)) as unknown as MobiDocument
-  const mobiSpine = mobi.getSpine()
-  const firstChapter = mobiSpine[0] ? mobi.loadChapter(String(mobiSpine[0].id)) : undefined
-  const firstTextLength = htmlToText(firstChapter?.html ?? '').length
+  let legacy: MobiDocument | null = null
+  let legacySpineLength = 0
 
-  if (mobiSpine.length > 1 || firstTextLength > 500) {
-    return mobi
+  try {
+    legacy = (await initMobiFile(data, resourceDirectory)) as unknown as MobiDocument
+    const legacySpine = legacy.getSpine()
+    legacySpineLength = legacySpine.length
+    const firstChapter = legacySpine[0]
+      ? legacy.loadChapter(String(legacySpine[0].id))
+      : undefined
+    const firstTextLength = htmlToText(firstChapter?.html ?? '').length
+
+    if (legacySpineLength > 1 || firstTextLength > 500) {
+      return legacy
+    }
+  } catch {
+    // 纯 AZW3/KF8 文件可能无法按 MOBI7 解析，回退到 KF8。
+    legacy = null
   }
 
   try {
     const kf8 = (await initKf8File(data, resourceDirectory)) as unknown as MobiDocument
-    const kf8Spine = kf8.getSpine()
-    if (kf8Spine.length > mobiSpine.length) {
-      mobi.destroy()
+    if (kf8.getSpine().length > legacySpineLength) {
+      legacy?.destroy()
       return kf8
     }
     kf8.destroy()
   } catch {
-    // If the file is not KF8, retain the MOBI parser result.
+    // 非 KF8 文件保留 MOBI 解析结果。
   }
 
-  return mobi
+  if (legacy) return legacy
+  throw new Error('MOBI/AZW3 文件解析失败：文件可能受 DRM 保护或已损坏')
 }
 
 function htmlToText(html: string): string {

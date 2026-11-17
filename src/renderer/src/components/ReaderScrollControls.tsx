@@ -16,7 +16,8 @@ import {
   TTS_MAX_VOLUME,
   TTS_MIN_RATE,
   TTS_MIN_VOLUME,
-  TTS_VOICES
+  TTS_VOICES,
+  type SystemVoiceLike
 } from '@shared/speech'
 import type { SpeechPlaybackState } from '../lib/speech'
 import {
@@ -37,12 +38,22 @@ interface ReaderScrollControlsProps {
   speechVoice: string
   speechRate: number
   speechVolume: number
+  ttsEngine: ReaderSettings['ttsEngine']
+  systemTtsVoice: string
   onToggleSpeech: () => void
   onStopSpeech: () => void
   onTtsSettingsChange: (
-    patch: Partial<Pick<ReaderSettings, 'ttsVoice' | 'ttsRate' | 'ttsVolume'>>
+    patch: Partial<
+      Pick<
+        ReaderSettings,
+        'ttsVoice' | 'ttsRate' | 'ttsVolume' | 'ttsEngine' | 'systemTtsVoice'
+      >
+    >
   ) => void
+  sleepMinutes: number | null
+  onSleepMinutesChange: (minutes: number | null) => void
   showSpeech?: boolean
+  paged?: boolean
   floating?: boolean
   onExitFloating?: () => void
 }
@@ -58,10 +69,15 @@ export function ReaderScrollControls({
   speechVoice,
   speechRate,
   speechVolume,
+  ttsEngine,
+  systemTtsVoice,
   onToggleSpeech,
   onStopSpeech,
   onTtsSettingsChange,
+  sleepMinutes,
+  onSleepMinutesChange,
   showSpeech = true,
+  paged = false,
   floating = false,
   onExitFloating
 }: ReaderScrollControlsProps): React.JSX.Element {
@@ -72,6 +88,22 @@ export function ReaderScrollControls({
   const speechPopoverRef = useRef<HTMLDivElement>(null)
   const [speedOpen, setSpeedOpen] = useState(false)
   const [speechOpen, setSpeechOpen] = useState(false)
+  const [systemVoices, setSystemVoices] = useState<SystemVoiceLike[]>([])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
+    const load = (): void => {
+      setSystemVoices(
+        window.speechSynthesis.getVoices().map((voice) => ({
+          name: voice.name,
+          lang: voice.lang
+        }))
+      )
+    }
+    load()
+    window.speechSynthesis.addEventListener('voiceschanged', load)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', load)
+  }, [])
 
   useEffect(() => {
     if (!speedOpen && !speechOpen) return
@@ -94,6 +126,12 @@ export function ReaderScrollControls({
       window.removeEventListener('keydown', closeOnEscape)
     }
   }, [speechOpen, speedOpen])
+
+  useEffect(() => {
+    if (!paged) return
+    setSpeedOpen(false)
+    setSpeechOpen(false)
+  }, [paged])
 
   useEffect(() => {
     const root = rootRef.current
@@ -233,6 +271,8 @@ export function ReaderScrollControls({
             <span />
           </>
         )}
+        {!paged && (
+          <>
         <div
           className="auto-scroll-control"
           onContextMenu={(event) => {
@@ -282,9 +322,11 @@ export function ReaderScrollControls({
           </button>
         </div>
         <span />
+          </>
+        )}
         <button
           type="button"
-          title={`向上移动 ${step} 像素`}
+          title={paged ? '上一页' : `向上移动 ${step} 像素`}
           onClick={() => onScroll(-step)}
         >
           <ChevronUp size={16} />
@@ -292,7 +334,7 @@ export function ReaderScrollControls({
         <span />
         <button
           type="button"
-          title={`向下移动 ${step} 像素`}
+          title={paged ? '下一页' : `向下移动 ${step} 像素`}
           onClick={() => onScroll(step)}
         >
           <ChevronDown size={16} />
@@ -392,20 +434,60 @@ export function ReaderScrollControls({
               </button>
             )}
             <label className="tts-setting-row">
-              <span>音色</span>
+              <span>引擎</span>
               <select
-                value={speechVoice}
+                value={ttsEngine}
                 onChange={(event) =>
-                  onTtsSettingsChange({ ttsVoice: event.target.value })
+                  onTtsSettingsChange({
+                    ttsEngine: event.target.value as ReaderSettings['ttsEngine']
+                  })
                 }
               >
-                {TTS_VOICES.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
-                    {voice.label}
-                  </option>
-                ))}
+                <option value="online">在线神经语音</option>
+                <option value="system">系统离线语音</option>
               </select>
             </label>
+            {ttsEngine === 'system' ? (
+              <label className="tts-setting-row">
+                <span>系统音色</span>
+                <select
+                  value={systemTtsVoice}
+                  onChange={(event) =>
+                    onTtsSettingsChange({ systemTtsVoice: event.target.value })
+                  }
+                >
+                  <option value="">自动选择中文语音</option>
+                  {systemVoices.map((voice) => (
+                    <option key={voice.name} value={voice.name}>
+                      {voice.name} · {voice.lang}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <label className="tts-setting-row">
+                <span>音色</span>
+                <select
+                  value={speechVoice}
+                  onChange={(event) =>
+                    onTtsSettingsChange({ ttsVoice: event.target.value })
+                  }
+                >
+                  {TTS_VOICES.map((voice) => (
+                    <option key={voice.id} value={voice.id}>
+                      {voice.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <p className="tts-setting-hint">
+              {ttsEngine === 'system'
+                ? systemVoices.length
+                  ? '离线朗读使用 Windows 已安装的语音，不消耗网络。'
+                  : '未检测到系统语音，请在 Windows 设置中安装中文语音包。'
+                : '在线听书依赖网络，单句会发送给 Microsoft Edge 语音服务。'}
+            </p>
             <label className="tts-setting-row">
               <span>语速</span>
               <strong>{speechRateLabel}</strong>
@@ -451,6 +533,25 @@ export function ReaderScrollControls({
                 onTtsSettingsChange({ ttsVolume: Number(event.target.value) })
               }
             />
+            <label className="tts-setting-row">
+              <span>定时停止</span>
+              <strong>{sleepMinutes ? `${sleepMinutes} 分钟后` : '关闭'}</strong>
+            </label>
+            <div className="tts-rate-presets" aria-label="定时停止">
+              {[0, 15, 30, 60].map((minutes) => {
+                const checked = minutes === 0 ? sleepMinutes === null : sleepMinutes === minutes
+                return (
+                  <button
+                    className={checked ? 'active' : ''}
+                    type="button"
+                    key={minutes}
+                    onClick={() => onSleepMinutesChange(minutes === 0 ? null : minutes)}
+                  >
+                    {minutes === 0 ? '关闭' : `${minutes}分`}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         )}
       </div>

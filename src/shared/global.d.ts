@@ -3,6 +3,7 @@ import type {
   AppSettings,
   BackupResult,
   BookContent,
+  BookMetadataPatch,
   BookRecord,
   ClearProfileResult,
   FloatingReaderSync,
@@ -12,6 +13,8 @@ import type {
   ProfileInfo,
   ReadingLocator,
   ReadingState,
+  ReadingStats,
+  RestoreProfileResult,
   SearchResult,
   WindowState,
   WorkspaceSession
@@ -24,6 +27,10 @@ export interface ReadexApi {
     chooseAndImport: () => Promise<ImportBatchResult | null>
     importPaths: (paths: string[]) => Promise<ImportBatchResult>
     remove: (bookId: string, deleteSource: boolean) => Promise<void>
+    updateMetadata: (bookId: string, patch: BookMetadataPatch) => Promise<BookRecord | null>
+    chooseCover: (bookId: string) => Promise<BookRecord | null>
+    saveGeneratedCover: (bookId: string, dataUrl: string) => Promise<BookRecord | null>
+    cancelImport: () => Promise<boolean>
     reveal: (bookId: string) => Promise<void>
   }
   book: {
@@ -44,6 +51,7 @@ export interface ReadexApi {
   }
   search: {
     global: (query: string) => Promise<SearchResult[]>
+    globalText: (query: string) => Promise<SearchResult[]>
     inBook: (bookId: string, query: string) => Promise<SearchResult[]>
   }
   speech: {
@@ -53,9 +61,15 @@ export interface ReadexApi {
     getState: (bookId: string) => Promise<ReadingState | null>
     saveState: (bookId: string, locator: ReadingLocator, progress: number) => Promise<void>
   }
+  stats: {
+    get: () => Promise<ReadingStats>
+    addReadingTime: (bookId: string, seconds: number) => Promise<ReadingStats>
+  }
   profile: {
     info: () => Promise<ProfileInfo>
     backup: () => Promise<BackupResult>
+    restore: () => Promise<RestoreProfileResult>
+    clearTtsCache: () => Promise<{ freedBytes: number }>
     clear: () => Promise<ClearProfileResult>
     open: () => Promise<void>
     copyPath: () => Promise<string>
@@ -80,6 +94,7 @@ export interface ReadexApi {
     ) => Promise<boolean>
     minimizeFloatingReader: () => Promise<void>
     closeFloatingReader: () => Promise<void>
+    setFloatingReaderShadow: (enabled: boolean) => Promise<void>
     beginFloatingDrag: (screenX: number, screenY: number) => Promise<boolean>
     moveFloatingDrag: (screenX: number, screenY: number) => void
     endFloatingDrag: () => Promise<void>

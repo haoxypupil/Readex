@@ -3,6 +3,7 @@ import { getBookResourceUrl } from '../shared/bookResource'
 import type { TtsSynthesisRequest } from '../shared/speech'
 import type {
   BookFormat,
+  BookMetadataPatch,
   FloatingReaderSync,
   ImportProgressEvent,
   ReadingLocator,
@@ -16,6 +17,12 @@ const api = {
     importPaths: (paths: string[]) => ipcRenderer.invoke('library:import-paths', paths),
     remove: (bookId: string, deleteSource: boolean) =>
       ipcRenderer.invoke('library:remove', bookId, deleteSource),
+    updateMetadata: (bookId: string, patch: BookMetadataPatch) =>
+      ipcRenderer.invoke('library:update-metadata', bookId, patch),
+    chooseCover: (bookId: string) => ipcRenderer.invoke('library:choose-cover', bookId),
+    saveGeneratedCover: (bookId: string, dataUrl: string) =>
+      ipcRenderer.invoke('library:save-generated-cover', bookId, dataUrl),
+    cancelImport: () => ipcRenderer.invoke('library:cancel-import'),
     reveal: (bookId: string) => ipcRenderer.invoke('library:reveal', bookId)
   },
   book: {
@@ -39,6 +46,7 @@ const api = {
   },
   search: {
     global: (query: string) => ipcRenderer.invoke('search:global', query),
+    globalText: (query: string) => ipcRenderer.invoke('search:global-text', query),
     inBook: (bookId: string, query: string) =>
       ipcRenderer.invoke('search:in-book', bookId, query)
   },
@@ -51,9 +59,16 @@ const api = {
     saveState: (bookId: string, locator: unknown, progress: number) =>
       ipcRenderer.invoke('reading:save-state', bookId, locator, progress)
   },
+  stats: {
+    get: () => ipcRenderer.invoke('stats:get'),
+    addReadingTime: (bookId: string, seconds: number) =>
+      ipcRenderer.invoke('stats:add', bookId, seconds)
+  },
   profile: {
     info: () => ipcRenderer.invoke('profile:info'),
     backup: () => ipcRenderer.invoke('profile:backup'),
+    restore: () => ipcRenderer.invoke('profile:restore'),
+    clearTtsCache: () => ipcRenderer.invoke('profile:clear-tts-cache'),
     clear: () => ipcRenderer.invoke('profile:clear'),
     open: () => ipcRenderer.invoke('profile:open'),
     copyPath: () => ipcRenderer.invoke('profile:copy-path')
@@ -79,6 +94,8 @@ const api = {
     ) => ipcRenderer.invoke('window:open-floating-reader', bookId, width, height, locator),
     minimizeFloatingReader: () => ipcRenderer.invoke('window:minimize-floating-reader'),
     closeFloatingReader: () => ipcRenderer.invoke('window:close-floating-reader'),
+    setFloatingReaderShadow: (enabled: boolean) =>
+      ipcRenderer.invoke('window:set-floating-reader-shadow', enabled),
     beginFloatingDrag: (screenX: number, screenY: number) =>
       ipcRenderer.invoke('window:begin-floating-drag', screenX, screenY),
     moveFloatingDrag: (screenX: number, screenY: number) =>

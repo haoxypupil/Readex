@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { parseByteRange } from '../../src/main/bookProtocol'
-import { getBookResourceId, getBookResourceUrl } from '../../src/shared/bookResource'
+import {
+  getBookResourceId,
+  getBookResourceUrl,
+  getComicPageRequest,
+  getComicPageUrl
+} from '../../src/shared/bookResource'
 
 describe('book resource URLs', () => {
   it('round-trips a book id through the custom protocol', () => {
@@ -14,6 +19,14 @@ describe('book resource URLs', () => {
     expect(getBookResourceId('https://book/example')).toBeNull()
     expect(getBookResourceId('readex://book/a/b')).toBeNull()
     expect(getBookResourceId('readex://book/a/source.bin')).toBeNull()
+  })
+
+  it('round-trips comic page requests', () => {
+    const url = getComicPageUrl('abc 123', 7)
+    expect(url).toBe('readex://comic/abc%20123/7')
+    expect(getComicPageRequest(url)).toEqual({ bookId: 'abc 123', index: 7 })
+    expect(getComicPageRequest('readex://comic/a/-1')).toBeNull()
+    expect(getComicPageRequest('readex://comic/a/1/2')).toBeNull()
   })
 })
 

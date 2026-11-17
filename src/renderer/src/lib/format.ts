@@ -25,8 +25,10 @@ export function bookFormatLabel(format: string): string {
     {
       epub: 'EPUB',
       mobi: 'MOBI',
+      azw3: 'AZW3',
       pdf: 'PDF',
-      txt: 'TXT'
+      txt: 'TXT',
+      cbz: 'CBZ'
     }[format] ?? format.toUpperCase()
   )
 }

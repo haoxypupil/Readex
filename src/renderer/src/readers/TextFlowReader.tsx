@@ -13,6 +13,7 @@ import type { AutoScrollStatus } from './types'
 import {
   applyTextHighlights,
   clearTextHighlights,
+  createRangeByOffsets,
   locatorFromSelection,
   scrollToTextOffset
 } from '../lib/textAnchors'
@@ -98,12 +99,10 @@ export const TextFlowReader = forwardRef<ReaderHandle, TextFlowReaderProps>(
     )
 
     useEffect(() => {
-      const roots = [...chapterRefs.current.values()]
-      for (const root of roots) clearTextHighlights(root, annotations)
-      for (const root of roots) applyTextHighlights(root, annotations)
-      return () => {
-        for (const root of roots) clearTextHighlights(root, annotations)
-      }
+      const chapters = [...chapterRefs.current.entries()].map(([id, root]) => ({ id, root }))
+      clearTextHighlights()
+      applyTextHighlights(chapters, annotations)
+      return () => clearTextHighlights()
     }, [annotations, safeChapters])
 
     useEffect(() => {
@@ -248,6 +247,25 @@ export const TextFlowReader = forwardRef<ReaderHandle, TextFlowReaderProps>(
 
     const advanceSpeechSection = async (): Promise<boolean> => false
 
+    const setSearchHighlight = (result: SearchResult | null): void => {
+      const registry = (globalThis as unknown as { CSS?: { highlights?: Map<string, unknown> } })
+        .CSS
+      if (!registry?.highlights) return
+      registry.highlights.delete('rdx-search')
+      const locator = result?.locator
+      if (!locator || typeof globalThis.Highlight === 'undefined') return
+      const { chapterId, start, end } = locator
+      if (!chapterId || start === undefined || end === undefined) return
+      const root = chapterRefs.current.get(chapterId)
+      if (!root) return
+      const range = createRangeByOffsets(root, start, end)
+      if (range) registry.highlights.set('rdx-search', new Highlight(range))
+    }
+
+    useEffect(() => {
+      return () => setSearchHighlight(null)
+    }, [book.id])
+
     useImperativeHandle(ref, () => ({
       goTo,
       scrollBy,
@@ -257,7 +275,8 @@ export const TextFlowReader = forwardRef<ReaderHandle, TextFlowReaderProps>(
       getSpeechSnapshot,
       scrollToSpeechSegment,
       setSpeechSegmentHighlight,
-      advanceSpeechSection
+      advanceSpeechSection,
+      setSearchHighlight
     }))
 
     useEffect(() => removeSpeechHighlight, [book.id])
