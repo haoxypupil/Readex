@@ -511,6 +511,7 @@ interface Annotation {
   locator: ReadingLocator
   createdAt: string
   updatedAt: string
+  tags?: string[]
   revisions?: Array<{
     note: string
     color: AnnotationColor
@@ -519,7 +520,7 @@ interface Annotation {
 }
 ```
 
-编辑已有标注时，如果笔记或颜色发生变化，旧版本会压入 `revisions`，最多保留 10 条；内容未变化只更新时间。
+编辑已有标注时，如果笔记或颜色发生变化，旧版本会压入 `revisions`，最多保留 10 条；内容未变化只更新时间。`tags` 与书籍标签共用同一套规范化（去空、去重、截断、上限 8 个），不参与历史版本，Markdown 导出会输出“标签：”行。
 
 书签复用注解模型：
 
@@ -1654,7 +1655,7 @@ Windows 使用 `build/readex.ico`：
 | autoScroll.test.ts | 自动滚动速度映射、中文句子切分和连续推进 |
 | embeddedFonts.test.ts | EPUB 字体样式优先通过 adoptedStyleSheets 注入，避免 XHTML 显示 CSS 文本 |
 | floatingDrag.test.ts | 浮框空白区拖动、控件排除、位移阈值和文本选择优先 |
-| notes.test.ts | Markdown 导出、书签标签、笔记编辑历史 |
+| notes.test.ts | Markdown 导出、书签标签、注解标签规范化、笔记编辑历史 |
 | bookTags.test.ts | 标签去空、去重、截断和数量上限 |
 | comicPages.test.ts | 漫画页码钳制与双页起始页对齐 |
 | comic.test.ts | CBZ 图片过滤、元数据文件和自然排序 |
@@ -1669,7 +1670,7 @@ Windows 使用 `build/readex.ico`：
 
 ```text
 20 个测试文件
-92 个测试用例
+95 个测试用例
 ```
 
 ### 24.2 手工和自动化桌面验证

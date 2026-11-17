@@ -35,6 +35,13 @@ export function NotesPanel({
         {annotation.type === 'bookmark' && <span className="annotation-kind">书签</span>}
         <span className="annotation-quote">{annotation.text}</span>
         {annotation.note && <span className="annotation-note">{annotation.note}</span>}
+        {(annotation.tags ?? []).length > 0 && (
+          <span className="annotation-tags">
+            {(annotation.tags ?? []).map((tag) => (
+              <i key={tag}>{tag}</i>
+            ))}
+          </span>
+        )}
         <time>{new Date(annotation.createdAt).toLocaleString('zh-CN')}</time>
       </button>
       <button

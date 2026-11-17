@@ -8,7 +8,7 @@ interface SelectionToolbarProps {
   selection?: SelectedText
   annotation?: Annotation
   initialNoteOpen?: boolean
-  onSave: (color: AnnotationColor, note: string) => void
+  onSave: (color: AnnotationColor, note: string, tags?: string[]) => void
   onDelete?: () => void
   onClose: () => void
 }
@@ -23,6 +23,7 @@ export function SelectionToolbar({
 }: SelectionToolbarProps): React.JSX.Element {
   const [noteOpen, setNoteOpen] = useState(initialNoteOpen || Boolean(annotation?.note))
   const [note, setNote] = useState(annotation?.note ?? '')
+  const [tags, setTags] = useState((annotation?.tags ?? []).join('，'))
   const [historyOpen, setHistoryOpen] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const text = annotation?.text ?? selection?.text ?? ''
@@ -44,7 +45,11 @@ export function SelectionToolbar({
 
   const save = (): void => {
     if (!note.trim()) return
-    onSave(annotation?.color ?? 'yellow', note.trim())
+    const tagList = tags
+      .split(/[,，]/)
+      .map((tag) => tag.trim())
+      .filter(Boolean)
+    onSave(annotation?.color ?? 'yellow', note.trim(), tagList)
   }
 
   const insertLineBreak = (): void => {
@@ -140,6 +145,27 @@ export function SelectionToolbar({
             }}
             placeholder="写下你的想法…"
           />
+          <label className="note-tags-field">
+            <span>标签</span>
+            <input
+              value={tags}
+              maxLength={160}
+              placeholder="用逗号分隔，例如：金句，待复习"
+              onChange={(event) => setTags(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.nativeEvent.isComposing) return
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  onClose()
+                  return
+                }
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  save()
+                }
+              }}
+            />
+          </label>
           {revisions.length > 0 && noteOpen && (
             <div className="note-history">
               <button

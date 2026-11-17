@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { BookOpen, Download, NotebookPen, Search } from 'lucide-react'
 import type { Annotation, AnnotationType, BookRecord } from '@shared/types'
 import { ANNOTATION_COLORS } from '@shared/types'
@@ -23,18 +23,34 @@ export function NotesDashboard({
   const [query, setQuery] = useState('')
   const [bookFilter, setBookFilter] = useState('all')
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
+  const [tagFilter, setTagFilter] = useState('all')
   const [sort, setSort] = useState<SortMode>('recent')
 
   const bookTitle = (bookId: string): string =>
     books.find((book) => book.id === bookId)?.title ?? '未知书籍'
+
+  const allTags = useMemo(() => {
+    const set = new Set<string>()
+    for (const annotation of annotations) {
+      for (const tag of annotation.tags ?? []) set.add(tag)
+    }
+    return [...set].sort((left, right) => left.localeCompare(right, 'zh-CN'))
+  }, [annotations])
+
+  useEffect(() => {
+    if (tagFilter !== 'all' && !allTags.includes(tagFilter)) setTagFilter('all')
+  }, [allTags, tagFilter])
 
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     const list = annotations.filter((annotation) => {
       if (bookFilter !== 'all' && annotation.bookId !== bookFilter) return false
       if (typeFilter !== 'all' && annotation.type !== typeFilter) return false
+      if (tagFilter !== 'all' && !(annotation.tags ?? []).includes(tagFilter)) return false
       if (!normalized) return true
-      return `${annotation.text} ${annotation.note}`.toLocaleLowerCase().includes(normalized)
+      return `${annotation.text} ${annotation.note} ${(annotation.tags ?? []).join(' ')}`
+        .toLocaleLowerCase()
+        .includes(normalized)
     })
     list.sort((a, b) => {
       if (sort === 'book') {
@@ -49,7 +65,7 @@ export function NotesDashboard({
     return list
     // bookTitle 依赖 books，books 变化会影响排序结果。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [annotations, bookFilter, books, query, sort, typeFilter])
+  }, [annotations, bookFilter, books, query, sort, tagFilter, typeFilter])
 
   const exportAll = (): void => {
     if (!annotations.length) return
@@ -99,6 +115,21 @@ export function NotesDashboard({
           <option value="comment">笔记</option>
           <option value="bookmark">书签</option>
         </select>
+        {allTags.length > 0 && (
+          <select
+            className="library-select"
+            value={tagFilter}
+            aria-label="按标签筛选"
+            onChange={(event) => setTagFilter(event.target.value)}
+          >
+            <option value="all">全部标签</option>
+            {allTags.map((tag) => (
+              <option value={tag} key={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        )}
         <select
           className="library-select"
           value={sort}
@@ -145,6 +176,13 @@ export function NotesDashboard({
                   <span className="global-note-copy">
                     <strong>{annotation.text}</strong>
                     {annotation.note && <span>{annotation.note}</span>}
+                    {(annotation.tags ?? []).length > 0 && (
+                      <span className="annotation-tags">
+                        {(annotation.tags ?? []).map((tag) => (
+                          <i key={tag}>{tag}</i>
+                        ))}
+                      </span>
+                    )}
                     <small>
                       <BookOpen size={13} />
                       {book?.title ?? '未知书籍'} · {annotationTypeLabel(annotation)} ·{' '}

@@ -1,26 +1,38 @@
 import type { Annotation, AnnotationColor, BookRecord } from '@shared/types'
+import { normalizeBookTags } from '@shared/bookTags'
 
 const MAX_REVISIONS = 10
 
-/** 生成一次标注更新，内容有变化时把旧版本压入最多 10 条历史。 */
+/**
+ * 生成一次标注更新：笔记或颜色变化时把旧版本压入最多 10 条历史，
+ * 标签单独规范化写入，不参与历史记录。
+ */
 export function createAnnotationUpdate(
   annotation: Annotation,
   color: AnnotationColor,
   note: string,
-  now = new Date().toISOString()
+  now = new Date().toISOString(),
+  tags?: string[]
 ): Annotation {
-  if (annotation.note === note && annotation.color === color) {
-    return { ...annotation, updatedAt: now }
-  }
-  const revisions = [
-    {
-      note: annotation.note,
-      color: annotation.color,
-      updatedAt: annotation.updatedAt
-    },
-    ...(annotation.revisions ?? [])
-  ].slice(0, MAX_REVISIONS)
-  return { ...annotation, color, note, updatedAt: now, revisions }
+  const contentChanged = annotation.note !== note || annotation.color !== color
+  const base: Annotation = contentChanged
+    ? {
+        ...annotation,
+        color,
+        note,
+        updatedAt: now,
+        revisions: [
+          {
+            note: annotation.note,
+            color: annotation.color,
+            updatedAt: annotation.updatedAt
+          },
+          ...(annotation.revisions ?? [])
+        ].slice(0, MAX_REVISIONS)
+      }
+    : { ...annotation, updatedAt: now }
+  if (tags === undefined && annotation.tags === undefined) return base
+  return { ...base, tags: normalizeBookTags(tags ?? annotation.tags ?? []) }
 }
 
 export function annotationsToMarkdown(book: BookRecord, annotations: Annotation[]): string {
@@ -43,6 +55,10 @@ export function annotationsToMarkdown(book: BookRecord, annotations: Annotation[
     lines.push('')
     if (annotation.note) {
       lines.push(annotation.note)
+      lines.push('')
+    }
+    if (annotation.tags?.length) {
+      lines.push(`标签：${annotation.tags.join('、')}`)
       lines.push('')
     }
     lines.push(`<small>${new Date(annotation.createdAt).toLocaleString('zh-CN')}</small>`)
@@ -83,6 +99,7 @@ export function allAnnotationsToMarkdown(
       lines.push(`### ${annotationTypeLabel(annotation)}`, '')
       lines.push(`> ${annotation.text.replace(/\n/g, '\n> ')}`, '')
       if (annotation.note) lines.push(annotation.note, '')
+      if (annotation.tags?.length) lines.push(`标签：${annotation.tags.join('、')}`, '')
       lines.push(`<small>${new Date(annotation.createdAt).toLocaleString('zh-CN')}</small>`, '')
     }
     lines.push('---', '')

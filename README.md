@@ -33,7 +33,7 @@ Author: Xiaoyao.Hao
 - Table of contents, chapter progress, in-book search with hit highlighting and previous/next navigation, reading position restoration, and a unified annotation model across formats.
 - Full-library text search across EPUB, TXT, MOBI, and AZW3, with results that open the matching chapter or text position.
 - Immersive reading with `Ctrl+Shift+F`, page turning with `Space`/`PageUp`/`PageDown`, and notification-free full-window reading.
-- Four-color highlights, comments, bookmarks, copy, and a text context menu; notes support location, deletion, revision history, grouped bookmark display, filters, and Markdown export for one book or the whole library.
+- Four-color highlights, comments, bookmarks, copy, and a text context menu; notes support location, deletion, revision history, tags, grouped bookmark display, filters, and Markdown export for one book or the whole library.
 - Dark, light, eye-care, and custom themes, with adjustable font, font size, line height, paragraph spacing, letter spacing, and content width.
 - Precision scrolling, smooth scrolling, small adjustments, and constant-speed auto-scroll from level 1 to 100.
 - Online text-to-speech for TXT, MOBI/KF8, EPUB, and text-based PDF, plus an offline Windows system-voice engine, starting from the visible sentence or selected text, with a sleep timer, voice, speed, volume, highlight, and cache controls.
@@ -66,7 +66,7 @@ Import books through the File menu, `Ctrl+O`, the import button, or by dragging 
 
 #### Annotations and Notes
 
-After selecting text, use the floating toolbar or context menu to add four-color highlights, comments, copies, and bookmarks. In the note editor, press `Enter` to save and `Ctrl+Enter` or `Shift+Enter` to insert a new line. Editing an existing note exposes its revision history, and any old version can be loaded back into the editor. The note panel groups bookmarks separately from highlights; the All Notes page filters by book, type, and date and can export the whole library as one Markdown file.
+After selecting text, use the floating toolbar or context menu to add four-color highlights, comments, copies, and bookmarks. In the note editor, press `Enter` to save and `Ctrl+Enter` or `Shift+Enter` to insert a new line; tags can be entered as a comma-separated list (up to 8). Editing an existing note exposes its revision history, and any old version can be loaded back into the editor. The note panel groups bookmarks separately from highlights; the All Notes page filters by book, type, tag, and date and can export the whole library as one Markdown file.
 
 #### Auto-Scroll and Text-to-Speech
 
@@ -167,7 +167,7 @@ Readex 是一个面向 Windows 的本地优先电子书阅读器。应用不登�
 - 目录、章节进度、带匹配高亮和上下条导航的书内搜索、阅读位置恢复和多格式统一标注模型。
 - 跨书全文搜索覆盖 EPUB、TXT、MOBI 和 AZW3，结果可直接打开并定位到匹配章节或文本位置。
 - 沉浸阅读（`Ctrl+Shift+F`），支持 `Space`、`PageUp`、`PageDown` 整屏翻页。
-- 四色高亮、评论、书签、复制和文本右键菜单；笔记支持定位、删除、编辑历史、书签分组、条件筛选，以及单本或全库 Markdown 导出。
+- 四色高亮、评论、书签、复制和文本右键菜单；笔记支持定位、删除、编辑历史、标签、书签分组、条件筛选，以及单本或全库 Markdown 导出。
 - 深色、明亮、护眼和自定义主题，配色参照 Codex 桌面客户端，可调字体、字号、行距、段距、字距和内容宽度。
 - 精细滚动、平滑滚动、上下微调，以及 1 至 100 级匀速自动滚动。
 - TXT、MOBI/KF8、EPUB 和文本型 PDF 在线听书，并提供 Windows 系统离线语音引擎；可从当前视口或选中文字开始，支持定时停止、音色、语速、音量、当前句高亮和缓存清理。
@@ -193,7 +193,7 @@ Readex 采用 PolyForm Noncommercial License 1.0.0 进行源码公开。允许�
 
 ### 标注与笔记
 
-选中正文后可使用浮动工具或右键菜单添加四色高亮、评论、复制和书签。笔记编辑器使用 `Enter` 保存，`Ctrl+Enter` 或 `Shift+Enter` 换行；编辑已有笔记时可展开“历史版本”，把旧内容载回编辑器。阅读侧栏把书签与高亮、评论分组显示；“所有笔记”页面支持按书籍、类型和时间筛选，并可将全库笔记导出为一个 Markdown 文件。
+选中正文后可使用浮动工具或右键菜单添加四色高亮、评论、复制和书签。笔记编辑器使用 `Enter` 保存，`Ctrl+Enter` 或 `Shift+Enter` 换行，并可为笔记填写标签（逗号分隔，最多 8 个）；编辑已有笔记时可展开“历史版本”，把旧内容载回编辑器。阅读侧栏把书签与高亮、评论分组显示；“所有笔记”页面支持按书籍、类型、标签和时间筛选，并可将全库笔记导出为一个 Markdown 文件。
 
 ### 自动滚动与听书
 

@@ -157,6 +157,8 @@ export interface Annotation {
   locator: ReadingLocator
   createdAt: string
   updatedAt: string
+  /** 用户标签，最多 8 个，与书籍标签共用同一套规范化规则。 */
+  tags?: string[]
   /** 最近 10 次编辑前的笔记与颜色快照。 */
   revisions?: AnnotationRevision[]
 }

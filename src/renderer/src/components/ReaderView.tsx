@@ -32,6 +32,7 @@ import type {
   TocItem
 } from '@shared/types'
 import { annotationsToMarkdown, createAnnotationUpdate } from '../lib/notes'
+import { normalizeBookTags } from '@shared/bookTags'
 import { bookCoverSrc } from '../lib/covers'
 import {
   findAdjacentTocItem,
@@ -449,14 +450,16 @@ export function ReaderView({
   const saveAnnotation = async (
     color: AnnotationColor,
     note: string,
-    forcedType?: AnnotationType
+    forcedType?: AnnotationType,
+    tags?: string[]
   ): Promise<void> => {
     const locator = activeAnnotation?.locator ?? selection?.locator
     const text = activeAnnotation?.text ?? selection?.text
     if (!locator || !text) return
     const now = new Date().toISOString()
+    const normalizedTags = tags !== undefined ? normalizeBookTags(tags) : undefined
     const annotation: Annotation = activeAnnotation
-      ? createAnnotationUpdate(activeAnnotation, color, note, now)
+      ? createAnnotationUpdate(activeAnnotation, color, note, now, tags)
       : {
           id: crypto.randomUUID(),
           bookId: book.id,
@@ -466,7 +469,8 @@ export function ReaderView({
           note,
           locator,
           createdAt: now,
-          updatedAt: now
+          updatedAt: now,
+          ...(normalizedTags?.length ? { tags: normalizedTags } : {})
         }
     const next = await window.readex.annotations.save(annotation)
     setAnnotations(next)
@@ -1018,7 +1022,7 @@ export function ReaderView({
             selection={selection ?? undefined}
             annotation={activeAnnotation ?? undefined}
             initialNoteOpen={noteEditorOpen || Boolean(activeAnnotation)}
-            onSave={(color, note) => void saveAnnotation(color, note)}
+            onSave={(color, note, tags) => void saveAnnotation(color, note, undefined, tags)}
             onDelete={
               activeAnnotation ? () => void deleteAnnotation(activeAnnotation) : undefined
             }
